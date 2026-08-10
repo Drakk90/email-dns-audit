@@ -1,0 +1,54 @@
+# =============================================================================
+#  servers.example.txt — Lista de dominios de MUESTRA
+#  Email DNS Audit Neon
+# =============================================================================
+#
+#  INSTRUCCIONES:
+#  1. Copia este archivo a "servers.txt":
+#         cp servers.example.txt servers.txt
+#  2. Edita "servers.txt" con tus dominios reales:
+#         nano servers.txt
+#  3. Ejecuta la auditoria:
+#         python email_dns_audit_neon.py --domains servers.txt
+#
+#  REGLAS DEL ARCHIVO:
+#  - Un dominio por linea.
+#  - Sin http://, sin https://, sin "/" al final.
+#  - Las lineas que empiezan con # son comentarios (se ignoran).
+#  - Las lineas vacias se ignoran.
+#  - Los dominios se normalizan a minusculas automaticamente.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# DOMINIOS DE PRODUCCION (reemplaza con los tuyos)
+# -----------------------------------------------------------------------------
+example.com
+example.org
+example.net
+
+# -----------------------------------------------------------------------------
+# SUBDOMINIOS CRITICOS
+# Recuerda: SPF/DKIM/DMARC del dominio raiz NO protegen subdominios si sp=
+# no esta definido. Audita los subdominios que envian correo.
+# -----------------------------------------------------------------------------
+# mail.example.com
+# correo.example.com
+# noreply.example.com
+# notificaciones.example.com
+
+# -----------------------------------------------------------------------------
+# DOMINIOS DEFENSIVOS / LOOKALIKE
+# Dominios registrados como proteccion de marca (typosquatting, variantes,
+# TLDs alternativos). Aunque no envien correo, deben estar protegidos.
+# -----------------------------------------------------------------------------
+# example.com.gt
+# example-corp.com
+# examp1e.com
+
+# -----------------------------------------------------------------------------
+# NOTAS OPERATIVAS
+# -----------------------------------------------------------------------------
+# - Si auditas mas de 50 dominios, considera correr en lotes de 20-30
+#   para evitar limites de consulta WHOIS (especialmente en TLDs .com y ccTLDs).
+# - Audita UNICAMENTE dominios propios o donde tengas autorizacion explicita.
+# =============================================================================
