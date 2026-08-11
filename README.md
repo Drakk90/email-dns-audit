@@ -4,7 +4,7 @@
 > Genera un **Excel unificado** listo para entregar a Dirección, con hallazgos, severidades y evidencia trazable.
 
 **Autor:** Eduardo Recinos · CISO
-**Versión:** 3.0
+**Versión:** 3.1
 **Licencia:** MIT
 **Repositorio:** [github.com/Drakk90/email-dns-audit](https://github.com/Drakk90/email-dns-audit)
 **Compatibilidad:** Ubuntu 20.04+ · Pop!_OS · Kali Linux · Debian 10+ · CachyOS / Arch
@@ -17,14 +17,14 @@
 - [¿Para quién es?](#-para-quién-es)
 - [Archivos del proyecto](#-archivos-del-proyecto)
 - [🐧 ¿Qué sistema usas? (importante)](#-qué-sistema-usas-importante)
+- [🔄 Flujo de uso: instalar una vez, ejecutar siempre](#-flujo-de-uso-instalar-una-vez-ejecutar-siempre)
 - [⚡ Instalación rápida (recomendada)](#-instalación-rápida-recomendada)
 - [🔧 Instalación manual (paso a paso)](#-instalación-manual-paso-a-paso)
   - [Ruta A — Ubuntu / Pop!_OS / Kali / Debian](#ruta-a--ubuntu--popos--kali--debian-bash--apt)
   - [Ruta B — CachyOS / Arch / Manjaro](#ruta-b--cachyos--arch--manjaro-fish--pacman)
 - [Preparar la lista de dominios](#-preparar-la-lista-de-dominios)
-- [Ejecutar la auditoría](#-ejecutar-la-auditoría)
+- [▶️ Ejecutar la auditoría](#️-ejecutar-la-auditoría)
 - [Resultados generados](#-resultados-generados)
-- [Uso recurrente](#-uso-recurrente)
 - [Solución de problemas](#-solución-de-problemas)
 - [Preguntas frecuentes](#-preguntas-frecuentes)
 - [Consideraciones de seguridad](#-consideraciones-de-seguridad)
@@ -72,7 +72,8 @@ Esta herramienta está diseñada para **CISOs, auditores de seguridad, administr
 | Archivo | Descripción |
 |---|---|
 | `email_dns_audit_neon.py` | Script principal de auditoría |
-| `setup.sh` | **Instalador automático** (crea entorno, instala todo, valida) |
+| `setup.sh` | **Instalador** — se corre **UNA vez** (crea entorno, instala dependencias) |
+| `run.sh` | **Ejecutor rápido** — se corre **cada vez** que auditas (no reinstala nada) |
 | `requirements.txt` | Lista de dependencias de Python |
 | `servers.example.txt` | Plantilla de dominios de muestra |
 | `servers.txt` | Tu lista real de dominios (la creas tú, no se sube a Git) |
@@ -84,7 +85,7 @@ Esta herramienta está diseñada para **CISOs, auditores de seguridad, administr
 
 ## 🐧 ¿Qué sistema usas? (importante)
 
-Esta herramienta funciona en **dos familias de Linux** que tienen diferencias clave. Identifica cuál usas antes de empezar:
+Esta herramienta funciona en **dos familias de Linux** con diferencias clave. Identifica cuál usas antes de empezar:
 
 | Aspecto | 🟠 **Ubuntu / Pop!_OS / Kali / Debian** | 🔵 **CachyOS / Arch / Manjaro** |
 |---|---|---|
@@ -93,52 +94,77 @@ Esta herramienta funciona en **dos familias de Linux** que tienen diferencias cl
 | **Gestor de paquetes** | `apt` | `pacman` |
 | **Activar entorno** | `source venv-email-audit/bin/activate` | `source venv-email-audit/bin/activate.fish` |
 | **Instalar Python** | `sudo apt install python3 python3-venv python3-pip` | `sudo pacman -S python python-pip` |
-| **Encadenar comandos** | `comando1 && comando2` | `comando1; and comando2` |
 | **Problema común de pip** | Puede faltar `python3-venv` | No suele ocurrir |
 
-> 🔍 **¿No sabes cuál shell usas?** Ejecuta `echo $SHELL`. Si responde `/bin/bash` estás en Bash (🟠). Si responde `/usr/bin/fish` estás en Fish (🔵).
+> 🔍 **¿No sabes qué shell usas?** Ejecuta `echo $SHELL`. Si responde `/bin/bash` estás en Bash (🟠). Si responde `/usr/bin/fish` estás en Fish (🔵).
 
-> ✅ **Buena noticia:** el instalador automático `setup.sh` **detecta tu sistema y shell**, instala lo correcto y te muestra al final el comando de activación exacto para tu caso. No tienes que memorizar estas diferencias.
+> ✅ **Buena noticia:** tanto `setup.sh` como `run.sh` **detectan tu sistema y shell** automáticamente. El `run.sh` incluso ejecuta la auditoría **sin que tengas que activar el entorno manualmente**.
+
+---
+
+## 🔄 Flujo de uso: instalar una vez, ejecutar siempre
+
+Este es el concepto más importante para no repetir trabajo:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  PRIMERA VEZ (instalación)                                   │
+│  ─────────────────────────                                   │
+│  ./setup.sh          ← Instala Python, crea el entorno,      │
+│                        instala dependencias. SOLO UNA VEZ.   │
+└─────────────────────────────────────────────────────────────┘
+                          │
+                          ▼
+┌─────────────────────────────────────────────────────────────┐
+│  CADA VEZ QUE AUDITAS                                         │
+│  ───────────────────                                         │
+│  ./run.sh            ← Solo ejecuta la auditoría.            │
+│                        NO reinstala nada. Rapido.            │
+└─────────────────────────────────────────────────────────────┘
+```
+
+> ⚠️ **No vuelvas a correr `setup.sh` cada vez.** Las dependencias quedan guardadas **permanentemente** dentro del entorno `venv-email-audit` tras la primera instalación. Para el uso diario usa `run.sh`.
 
 ---
 
 ## ⚡ Instalación rápida (recomendada)
 
-El script `setup.sh` hace **todo** por ti en cualquiera de los dos sistemas: verifica Python, instala lo que falte (`python3-venv` en Ubuntu o `python-pip` en Arch), crea el entorno virtual, instala dependencias, valida y prepara tu `servers.txt`.
+El script `setup.sh` hace **todo** por ti en cualquier sistema: verifica Python, instala lo que falte, crea el entorno virtual, instala dependencias, valida y prepara tu `servers.txt`.
 
 ```bash
 # 1. Descarga el proyecto
 git clone https://github.com/Drakk90/email-dns-audit.git
 cd email-dns-audit
 
-# 2. Da permisos de ejecución al instalador
-chmod +x setup.sh
+# 2. Da permisos de ejecución a los scripts
+chmod +x setup.sh run.sh
 
-# 3. Ejecuta el instalador
+# 3. Ejecuta el instalador UNA sola vez
 ./setup.sh
 ```
 
-Eso es todo. El instalador te mostrará al final los comandos exactos para ejecutar tu primera auditoría según tu shell (Bash o Fish).
+Al terminar, para auditar solo necesitas:
 
-> ✅ El instalador es **idempotente**: puedes ejecutarlo varias veces sin problemas. Si el entorno ya existe, te preguntará si deseas recrearlo.
+```bash
+./run.sh
+```
+
+> ✅ El instalador es **idempotente**: puedes ejecutarlo varias veces sin romper nada. Si el entorno ya existe, te preguntará si deseas recrearlo.
 
 **¿Qué hace el `setup.sh` internamente?**
 
-1. Detecta e instala Python 3.9+ si falta (usando `apt`, `pacman` o `dnf` según tu sistema).
+1. Detecta e instala Python 3.9+ si falta (usando `apt`, `pacman` o `dnf`).
 2. **En Ubuntu/Debian/Kali:** instala el paquete exacto `python3.X-venv` para tu versión de Python (resuelve el error "No se encontró pip").
-3. Verifica que los archivos del proyecto estén presentes.
-4. Crea el entorno virtual **`venv-email-audit`** con pip garantizado.
-5. Instala todas las dependencias de `requirements.txt`.
-6. Valida que cada librería se importe correctamente.
-7. Crea tu `servers.txt` a partir de la plantilla si aún no existe.
-
-Si prefieres entender cada paso o el instalador falla, usa la [instalación manual](#-instalación-manual-paso-a-paso).
+3. Crea el entorno virtual **`venv-email-audit`** con pip garantizado.
+4. Instala todas las dependencias de `requirements.txt`.
+5. Valida que cada librería se importe correctamente.
+6. Crea tu `servers.txt` a partir de la plantilla si aún no existe.
 
 ---
 
 ## 🔧 Instalación manual (paso a paso)
 
-Elige la ruta según tu sistema operativo.
+Elige la ruta según tu sistema operativo. Solo necesitas esto **una vez**; después usa `run.sh`.
 
 ---
 
@@ -157,7 +183,7 @@ sudo apt update
 sudo apt install -y python3 python3-pip python3-venv
 ```
 
-> ⚠️ **Importante para Ubuntu/Pop!_OS/Kali:** el paquete `python3-venv` es **obligatorio**. Sin él, el entorno virtual se crea **sin pip** y verás el error `No se encontró pip`. Si tu versión de Python es específica (ej. 3.11), instala también `sudo apt install -y python3.11-venv`.
+> ⚠️ **Importante para Ubuntu/Pop!_OS/Kali:** `python3-venv` es **obligatorio**. Sin él, el entorno se crea **sin pip** y verás el error `No se encontró pip`. Si tu Python es específico (ej. 3.11), instala también `sudo apt install -y python3.11-venv`.
 
 #### A.2 — Descargar el proyecto
 
@@ -178,10 +204,7 @@ python3 -m venv venv-email-audit
 source venv-email-audit/bin/activate
 ```
 
-> ✅ Verás `(venv-email-audit)` al inicio de tu prompt:
-> ```
-> (venv-email-audit) usuario@pop-os:~/email-dns-audit$
-> ```
+> ✅ Verás `(venv-email-audit)` al inicio del prompt.
 
 #### A.5 — Instalar dependencias
 
@@ -199,19 +222,19 @@ python -c "import rich, dns.resolver, cryptography, httpx, whois, aiodns, openpy
 
 ### Ruta B — CachyOS / Arch / Manjaro (Fish + pacman)
 
-#### B.1 — Instalar Python y dependencias del sistema
+#### B.1 — Instalar Python
 
 ```bash
 python --version
 ```
 
-Si ves `Python 3.9` o superior, continúa. Si no:
+Si es menor a 3.9:
 
 ```bash
 sudo pacman -S --needed python python-pip
 ```
 
-> 💡 En Arch, Python viene completo con `venv` y `ensurepip` incluidos, así que no suele haber problemas de pip.
+> 💡 En Arch, Python viene completo con `venv` y `ensurepip`, así que no hay problemas de pip.
 
 #### B.2 — Descargar el proyecto
 
@@ -232,9 +255,7 @@ python -m venv venv-email-audit
 source venv-email-audit/bin/activate.fish
 ```
 
-> ⚠️ **La extensión `.fish` es obligatoria en CachyOS.** Si usas `activate` sin extensión, verás el error `"case" builtin not inside of switch block`.
-
-> ✅ Verás `(venv-email-audit)` al inicio de tu prompt.
+> ⚠️ **La extensión `.fish` es obligatoria en CachyOS.** Con `activate` sin extensión verás `"case" builtin not inside of switch block`.
 
 #### B.5 — Instalar dependencias
 
@@ -259,7 +280,7 @@ cp servers.example.txt servers.txt
 nano servers.txt
 ```
 
-Ejemplo de contenido:
+Ejemplo:
 
 ```text
 # Líneas que empiezan con # son comentarios
@@ -274,19 +295,56 @@ sucursal.midominio.com
 - Sin `http://`, sin `https://`, sin `/` final.
 - Las líneas con `#` son comentarios; las vacías se ignoran.
 
-> 🔒 `servers.txt` está en el `.gitignore`, así que tu lista real **nunca se sube** al repositorio. Solo se comparte `servers.example.txt`.
+> 🔒 `servers.txt` está en el `.gitignore`, así que tu lista real **nunca se sube** al repositorio.
 
 ---
 
 ## ▶️ Ejecutar la auditoría
 
-Con el entorno activado y `servers.txt` preparado (igual en ambos sistemas):
+Hay **dos formas**. La recomendada para uso diario es el `run.sh`.
+
+### 🚀 Opción 1 — Con `run.sh` (recomendada, la más simple)
+
+El `run.sh` verifica que todo esté listo y ejecuta la auditoría **sin que tengas que activar el entorno manualmente**. Funciona igual en Bash y en Fish.
 
 ```bash
-python email_dns_audit_neon.py --domains servers.txt
+# Con servers.txt por defecto
+./run.sh
+
+# Con otro archivo de dominios
+./run.sh mis_dominios.txt
 ```
 
-### Opciones disponibles
+**¿Qué hace el `run.sh`?**
+
+1. Verifica que el entorno `venv-email-audit` exista.
+2. Verifica que las 7 dependencias estén instaladas (sin reinstalar).
+3. Verifica que exista tu `servers.txt`.
+4. Ejecuta la auditoría usando el Python del entorno directamente.
+
+> Si falta algo, el `run.sh` te avisa exactamente qué hacer (por ejemplo, correr `setup.sh` una vez). **No reinstala nada por su cuenta**, así que es rápido.
+
+### 🔧 Opción 2 — Activando el entorno manualmente
+
+Si prefieres el método clásico:
+
+**🟠 Ubuntu / Pop!_OS / Kali / Debian (Bash):**
+
+```bash
+source venv-email-audit/bin/activate
+python email_dns_audit_neon.py --domains servers.txt
+deactivate
+```
+
+**🔵 CachyOS / Arch / Manjaro (Fish):**
+
+```fish
+source venv-email-audit/bin/activate.fish
+python email_dns_audit_neon.py --domains servers.txt
+deactivate
+```
+
+### Opciones del script
 
 | Opción | Descripción | Ejemplo |
 |---|---|---|
@@ -297,18 +355,7 @@ python email_dns_audit_neon.py --domains servers.txt
 | `--excel-name` | Nombre del Excel | `--excel-name Audit_2026.xlsx` |
 | `--help`, `-h` | Muestra la ayuda | `-h` |
 
-**Ejemplos:**
-
-```bash
-# Básica
-python email_dns_audit_neon.py --domains servers.txt
-
-# Con selectores DKIM de tu organización
-python email_dns_audit_neon.py -d servers.txt -s "corp2026 marketing"
-
-# Resolver de Google y carpeta específica
-python email_dns_audit_neon.py -d servers.txt -r 8.8.8.8 -o ~/auditorias/2026Q2
-```
+> 💡 El `run.sh` pasa el archivo de dominios automáticamente. Para usar opciones avanzadas (resolver, selectores, etc.), usa la Opción 2 con el entorno activado.
 
 ---
 
@@ -321,7 +368,6 @@ audit_20260630_143022/
 ├── Auditoria_Email_Authentication_<fecha>.xlsx   ← 📄 ENTREGABLE PRINCIPAL
 ├── audit_spf.csv                                  ← Respaldos CSV
 ├── audit_dkim.csv
-├── audit_dmarc.csv
 ├── ... (un CSV por control)
 └── evidencias/                                    ← Evidencia trazable
     └── midominio.com/
@@ -346,123 +392,38 @@ audit_20260630_143022/
 
 ### Ver los resultados de forma gráfica
 
-Abre el Excel con doble clic o desde terminal:
-
 ```bash
-# Ubuntu / Pop!_OS / Kali (GNOME)
 xdg-open audit_*/Auditoria_Email_Authentication_*.xlsx
-
-# Con LibreOffice explícito
+# o
 libreoffice audit_*/Auditoria_Email_Authentication_*.xlsx
 ```
 
 ---
 
-## 🔁 Uso recurrente
-
-Una vez instalado, para futuras auditorías solo necesitas activar el entorno y ejecutar. **El comando de activación depende de tu sistema:**
-
-### 🟠 Ubuntu / Pop!_OS / Kali / Debian (Bash)
-
-```bash
-cd ~/email-dns-audit
-source venv-email-audit/bin/activate
-python email_dns_audit_neon.py --domains servers.txt
-deactivate
-```
-
-### 🔵 CachyOS / Arch / Manjaro (Fish)
-
-```fish
-cd ~/email-dns-audit
-source venv-email-audit/bin/activate.fish
-python email_dns_audit_neon.py --domains servers.txt
-deactivate
-```
-
-### 💡 Atajo opcional
-
-**En Bash** (Ubuntu/Pop!_OS/Kali) — edita `~/.bashrc`:
-
-```bash
-echo "alias audit-email='cd ~/email-dns-audit && source venv-email-audit/bin/activate && python email_dns_audit_neon.py --domains servers.txt'" >> ~/.bashrc
-source ~/.bashrc
-```
-
-**En Fish** (CachyOS) — crea una función persistente:
-
-```fish
-function audit-email
-    cd ~/email-dns-audit
-    source venv-email-audit/bin/activate.fish
-    python email_dns_audit_neon.py --domains servers.txt
-end
-funcsave audit-email
-```
-
-Luego solo escribes `audit-email` en cualquiera de los dos.
-
----
-
 ## 🔧 Solución de problemas
 
-### ❌ `error: externally-managed-environment` (Ubuntu/Pop!_OS/Kali/Arch)
+### ❌ "Cada vez que audito tengo que correr `setup.sh` de nuevo"
 
-**Causa:** intentaste instalar con `pip` sin activar el entorno virtual. Es una protección de PEP 668.
+**Causa:** la primera instalación falló al instalar dependencias (típico del problema `python3-venv` en Ubuntu), por lo que el entorno quedó vacío.
 
-**Solución:** activa el entorno **antes** de `pip install`:
-
-```bash
-# Bash (Ubuntu/Pop!_OS/Kali)
-source venv-email-audit/bin/activate
-
-# Fish (CachyOS)
-source venv-email-audit/bin/activate.fish
-
-# Luego
-pip install -r requirements.txt
-```
-
----
-
-### ❌ `No se encontró pip en el entorno virtual` (Ubuntu/Pop!_OS/Kali)
-
-**Causa:** falta el paquete `python3-venv`, por lo que el entorno se creó sin pip. Es el error más común en sistemas basados en Debian.
-
-**Solución:**
+**Solución:** confirma qué hay en el entorno:
 
 ```bash
-# Instala el paquete que falta (usa tu versión de Python si es específica)
-sudo apt install -y python3-venv python3-pip
-
-# Borra el entorno incompleto
-rm -rf venv-email-audit
-
-# Vuelve a ejecutar el instalador
-./setup.sh
+source venv-email-audit/bin/activate    # o activate.fish en Fish
+pip list | grep -Ei "rich|dnspython|cryptography|httpx|whois|aiodns|openpyxl"
+deactivate
 ```
 
-> El `setup.sh` actualizado ya detecta e instala automáticamente `python3.X-venv` para tu versión exacta de Python.
+- **Si aparecen las 7 librerías:** el entorno está bien. Usa `./run.sh` de aquí en adelante, **no** `setup.sh`.
+- **Si NO aparecen:** corre `./setup.sh` **una última vez** con la versión corregida. Quedará permanente.
 
 ---
 
-### ❌ `"case" builtin not inside of switch block` (CachyOS/Arch)
+### ❌ `error: externally-managed-environment`
 
-**Causa:** usas Fish shell y ejecutaste el script de activación de Bash.
+**Causa:** intentaste instalar con `pip` sin activar el entorno virtual (protección PEP 668).
 
-**Solución:** usa la versión `.fish`:
-
-```fish
-source venv-email-audit/bin/activate.fish
-```
-
----
-
-### ❌ `ModuleNotFoundError: No module named 'rich'`
-
-**Causa:** el entorno no está activado o faltan dependencias.
-
-**Solución:** activa el entorno (según tu shell) y reinstala:
+**Solución:** activa el entorno antes de `pip install`:
 
 ```bash
 # Bash
@@ -475,22 +436,47 @@ pip install -r requirements.txt
 
 ---
 
-### ❌ `Permission denied` al ejecutar `./setup.sh`
+### ❌ `No se encontró pip en el entorno virtual` (Ubuntu/Pop!_OS/Kali)
 
-**Causa:** el script no tiene permisos de ejecución (común tras descargar de GitHub web).
+**Causa:** falta `python3-venv`, por lo que el entorno se creó sin pip.
 
 **Solución:**
 
 ```bash
-chmod +x setup.sh
+sudo apt install -y python3-venv python3-pip
+rm -rf venv-email-audit
 ./setup.sh
+```
+
+---
+
+### ❌ `"case" builtin not inside of switch block` (CachyOS/Arch)
+
+**Causa:** usas Fish y ejecutaste el script de activación de Bash.
+
+**Solución:**
+
+```fish
+source venv-email-audit/bin/activate.fish
+```
+
+---
+
+### ❌ `Permission denied` al ejecutar `./setup.sh` o `./run.sh`
+
+**Causa:** falta permiso de ejecución (común tras descargar de GitHub web).
+
+**Solución:**
+
+```bash
+chmod +x setup.sh run.sh
 ```
 
 ---
 
 ### ❌ `requirements.txt` con `&gt;` o `&lt;`
 
-**Causa:** entidades HTML por copy-paste desde una web renderizada.
+**Causa:** entidades HTML por copy-paste desde una web.
 
 **Solución:**
 
@@ -510,11 +496,14 @@ sed -i 's/&gt;/>/g; s/&lt;/</g; s/&amp;/\&/g' requirements.txt
 
 ## ❓ Preguntas frecuentes
 
-**¿Funciona igual en Ubuntu/Pop!_OS y en CachyOS/Arch?**
-Sí. La única diferencia práctica es el comando de activación del entorno (`activate` en Bash vs `activate.fish` en Fish). El `setup.sh` lo detecta por ti.
+**¿Cuándo uso `setup.sh` y cuándo `run.sh`?**
+`setup.sh` una sola vez para instalar. `run.sh` cada vez que auditas. Nunca necesitas repetir `setup.sh`.
+
+**¿El `run.sh` funciona en Fish y en Bash?**
+Sí. Usa el Python del entorno directamente, así que no depende de tu shell ni requiere activar el venv.
 
 **¿Necesito conocimientos de programación?**
-No. Con `./setup.sh` y copiar/pegar comandos es suficiente.
+No. Con `./setup.sh` una vez y `./run.sh` para auditar es suficiente.
 
 **¿Modifica algo en mis dominios o DNS?**
 No. La herramienta **solo lee** (consultas DNS y HTTP públicas). Nunca escribe.
@@ -524,9 +513,6 @@ No. La herramienta **solo lee** (consultas DNS y HTTP públicas). Nunca escribe.
 
 **¿Puedo auditar dominios que no son míos?**
 Técnicamente sí (solo datos públicos), pero **audita únicamente dominios propios o autorizados**.
-
-**¿Puedo automatizarlo con cron?**
-Sí. Recuerda activar el entorno virtual dentro del script de cron con la ruta absoluta.
 
 ---
 
