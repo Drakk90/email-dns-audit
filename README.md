@@ -4,7 +4,7 @@
 > Genera un **Excel unificado** listo para entregar a Dirección, con hallazgos, severidades y evidencia trazable.
 
 **Autor:** Eduardo Recinos · CISO
-**Versión:** 3.1
+**Versión:** 3.2
 **Licencia:** MIT
 **Repositorio:** [github.com/Drakk90/email-dns-audit](https://github.com/Drakk90/email-dns-audit)
 **Compatibilidad:** Ubuntu 20.04+ · Pop!_OS · Kali Linux · Debian 10+ · CachyOS / Arch
@@ -20,10 +20,10 @@
 - [🔄 Flujo de uso: instalar una vez, ejecutar siempre](#-flujo-de-uso-instalar-una-vez-ejecutar-siempre)
 - [⚡ Instalación rápida (recomendada)](#-instalación-rápida-recomendada)
 - [🔧 Instalación manual (paso a paso)](#-instalación-manual-paso-a-paso)
-  - [Ruta A — Ubuntu / Pop!_OS / Kali / Debian](#ruta-a--ubuntu--popos--kali--debian-bash--apt)
-  - [Ruta B — CachyOS / Arch / Manjaro](#ruta-b--cachyos--arch--manjaro-fish--pacman)
 - [Preparar la lista de dominios](#-preparar-la-lista-de-dominios)
 - [▶️ Ejecutar la auditoría](#️-ejecutar-la-auditoría)
+- [🔎 Modo DKIM profundo (--deep-dkim)](#-modo-dkim-profundo---deep-dkim)
+- [🔐 Validación DNSSEC multi-resolver](#-validación-dnssec-multi-resolver)
 - [Resultados generados](#-resultados-generados)
 - [Solución de problemas](#-solución-de-problemas)
 - [Preguntas frecuentes](#-preguntas-frecuentes)
@@ -40,9 +40,9 @@
 |---|---|
 | **WHOIS** | Registrar, fechas de creación/expiración, estado del dominio |
 | **NS / SOA** | Nameservers y proveedor DNS detectado |
-| **DNSSEC** | DNSKEY, DS, bit AD, diagnóstico de cadena de confianza |
+| **DNSSEC** | DNSKEY, DS, bit AD validado contra **múltiples resolvers** |
 | **SPF** | Registro, mecanismo `all`, DNS lookups, void lookups, proveedores |
-| **DKIM** | 28 selectores comunes, algoritmo, tamaño de llave, modo prueba |
+| **DKIM** | ~55 selectores comunes (o ~166 en modo profundo), algoritmo, tamaño de llave |
 | **DMARC** | Política `p`/`sp`, `pct`, alineación, `rua`/`ruf`, `fo` |
 | **MX** | Proveedor de correo detectado |
 | **MTA-STS** | Política publicada, `max_age`, accesibilidad HTTPS |
@@ -50,6 +50,8 @@
 | **BIMI** | Registro, SVG, certificado VMC (descarga y parseo X.509) |
 
 **Salida principal:** un archivo Excel (`.xlsx`) con múltiples hojas pre-formateadas, formato condicional (verde/amarillo/rojo) y listas desplegables. Además genera CSVs de respaldo y una carpeta de evidencias con marca temporal.
+
+> ⚡ **Rendimiento:** cada dominio tarda **menos de 30 segundos** en modo balanceado gracias a las consultas asíncronas. Dominios como `google.com` o `tesla.com` se auditan por completo en ese rango.
 
 ---
 
@@ -98,13 +100,11 @@ Esta herramienta funciona en **dos familias de Linux** con diferencias clave. Id
 
 > 🔍 **¿No sabes qué shell usas?** Ejecuta `echo $SHELL`. Si responde `/bin/bash` estás en Bash (🟠). Si responde `/usr/bin/fish` estás en Fish (🔵).
 
-> ✅ **Buena noticia:** tanto `setup.sh` como `run.sh` **detectan tu sistema y shell** automáticamente. El `run.sh` incluso ejecuta la auditoría **sin que tengas que activar el entorno manualmente**.
+> ✅ **Buena noticia:** tanto `setup.sh` como `run.sh` **detectan tu sistema y shell** automáticamente.
 
 ---
 
 ## 🔄 Flujo de uso: instalar una vez, ejecutar siempre
-
-Este es el concepto más importante para no repetir trabajo:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -123,13 +123,11 @@ Este es el concepto más importante para no repetir trabajo:
 └─────────────────────────────────────────────────────────────┘
 ```
 
-> ⚠️ **No vuelvas a correr `setup.sh` cada vez.** Las dependencias quedan guardadas **permanentemente** dentro del entorno `venv-email-audit` tras la primera instalación. Para el uso diario usa `run.sh`.
+> ⚠️ **No vuelvas a correr `setup.sh` cada vez.** Las dependencias quedan guardadas **permanentemente** dentro del entorno `venv-email-audit`. Para el uso diario usa `run.sh`.
 
 ---
 
 ## ⚡ Instalación rápida (recomendada)
-
-El script `setup.sh` hace **todo** por ti en cualquier sistema: verifica Python, instala lo que falte, crea el entorno virtual, instala dependencias, valida y prepara tu `servers.txt`.
 
 ```bash
 # 1. Descarga el proyecto
@@ -149,7 +147,7 @@ Al terminar, para auditar solo necesitas:
 ./run.sh
 ```
 
-> ✅ El instalador es **idempotente**: puedes ejecutarlo varias veces sin romper nada. Si el entorno ya existe, te preguntará si deseas recrearlo.
+> ✅ El instalador es **idempotente**: puedes ejecutarlo varias veces sin romper nada.
 
 **¿Qué hace el `setup.sh` internamente?**
 
@@ -166,114 +164,60 @@ Al terminar, para auditar solo necesitas:
 
 Elige la ruta según tu sistema operativo. Solo necesitas esto **una vez**; después usa `run.sh`.
 
----
-
 ### Ruta A — Ubuntu / Pop!_OS / Kali / Debian (Bash + apt)
 
-#### A.1 — Instalar Python y dependencias del sistema
-
 ```bash
+# A.1 — Python y dependencias del sistema
 python3 --version
-```
-
-Si ves `Python 3.9` o superior, continúa. Si no, o si falta `venv`:
-
-```bash
 sudo apt update
 sudo apt install -y python3 python3-pip python3-venv
-```
 
-> ⚠️ **Importante para Ubuntu/Pop!_OS/Kali:** `python3-venv` es **obligatorio**. Sin él, el entorno se crea **sin pip** y verás el error `No se encontró pip`. Si tu Python es específico (ej. 3.11), instala también `sudo apt install -y python3.11-venv`.
-
-#### A.2 — Descargar el proyecto
-
-```bash
+# A.2 — Descargar el proyecto
 git clone https://github.com/Drakk90/email-dns-audit.git
 cd email-dns-audit
-```
 
-#### A.3 — Crear el entorno virtual
-
-```bash
+# A.3 — Crear el entorno virtual
 python3 -m venv venv-email-audit
-```
 
-#### A.4 — Activar el entorno (Bash)
-
-```bash
+# A.4 — Activar el entorno (Bash)
 source venv-email-audit/bin/activate
-```
 
-> ✅ Verás `(venv-email-audit)` al inicio del prompt.
-
-#### A.5 — Instalar dependencias
-
-```bash
+# A.5 — Instalar dependencias
 pip install -r requirements.txt
-```
 
-#### A.6 — Verificar
-
-```bash
+# A.6 — Verificar
 python -c "import rich, dns.resolver, cryptography, httpx, whois, aiodns, openpyxl; print('✅ Dependencias OK')"
 ```
 
----
+> ⚠️ **Importante:** `python3-venv` es **obligatorio**. Si tu Python es específico (ej. 3.11), instala también `sudo apt install -y python3.11-venv`.
 
 ### Ruta B — CachyOS / Arch / Manjaro (Fish + pacman)
 
-#### B.1 — Instalar Python
-
 ```bash
+# B.1 — Instalar Python
 python --version
-```
-
-Si es menor a 3.9:
-
-```bash
 sudo pacman -S --needed python python-pip
-```
 
-> 💡 En Arch, Python viene completo con `venv` y `ensurepip`, así que no hay problemas de pip.
-
-#### B.2 — Descargar el proyecto
-
-```bash
+# B.2 — Descargar el proyecto
 git clone https://github.com/Drakk90/email-dns-audit.git
 cd email-dns-audit
-```
 
-#### B.3 — Crear el entorno virtual
-
-```bash
+# B.3 — Crear el entorno virtual
 python -m venv venv-email-audit
-```
 
-#### B.4 — Activar el entorno (Fish)
-
-```fish
+# B.4 — Activar el entorno (Fish)  ⚠️ nota la extension .fish
 source venv-email-audit/bin/activate.fish
-```
 
-> ⚠️ **La extensión `.fish` es obligatoria en CachyOS.** Con `activate` sin extensión verás `"case" builtin not inside of switch block`.
-
-#### B.5 — Instalar dependencias
-
-```fish
+# B.5 — Instalar dependencias
 pip install -r requirements.txt
-```
 
-#### B.6 — Verificar
-
-```fish
+# B.6 — Verificar
 python -c "import rich, dns.resolver, cryptography, httpx, whois, aiodns, openpyxl; print('✅ Dependencias OK')"
 ```
 
 ---
 
 ## 📝 Preparar la lista de dominios
-
-Copia la plantilla y edítala con tus dominios reales (igual en ambos sistemas):
 
 ```bash
 cp servers.example.txt servers.txt
@@ -303,30 +247,33 @@ sucursal.midominio.com
 
 Hay **dos formas**. La recomendada para uso diario es el `run.sh`.
 
-### 🚀 Opción 1 — Con `run.sh` (recomendada, la más simple)
+### 🚀 Opción 1 — Con `run.sh` (recomendada)
 
 El `run.sh` verifica que todo esté listo y ejecuta la auditoría **sin que tengas que activar el entorno manualmente**. Funciona igual en Bash y en Fish.
 
 ```bash
-# Con servers.txt por defecto
+# servers.txt · modo DKIM balanceado (default)
 ./run.sh
 
-# Con otro archivo de dominios
-./run.sh mis_dominios.txt
+# archivo indicado · balanceado
+./run.sh servers.txt
+
+# archivo indicado · modo DKIM PROFUNDO
+./run.sh servers.txt deep
+
+# DKIM profundo con 48 meses de selectores rotativos
+./run.sh servers.txt deep 48
 ```
 
-**¿Qué hace el `run.sh`?**
+| Argumento | Posición | Valores | Default |
+|---|---|---|---|
+| Archivo de dominios | `$1` | ruta a un `.txt` | `servers.txt` |
+| Modo DKIM | `$2` | `normal` \| `deep` | `normal` |
+| Meses rotativos (solo deep) | `$3` | número | `30` |
 
-1. Verifica que el entorno `venv-email-audit` exista.
-2. Verifica que las 7 dependencias estén instaladas (sin reinstalar).
-3. Verifica que exista tu `servers.txt`.
-4. Ejecuta la auditoría usando el Python del entorno directamente.
+### 🔧 Opción 2 — Activando el entorno manualmente (aconsejable)
 
-> Si falta algo, el `run.sh` te avisa exactamente qué hacer (por ejemplo, correr `setup.sh` una vez). **No reinstala nada por su cuenta**, así que es rápido.
-
-### 🔧 Opción 2 — Activando el entorno manualmente
-
-Si prefieres el método clásico:
+> 💡 **Recomendación:** para auditorías puntuales o de diagnóstico, es **aconsejable ejecutar de forma manual** con el entorno activado. Te da control total sobre las opciones (resolver, selectores, salida) y permite ver el detalle de cada control en pantalla. Cada dominio tarda **menos de 30 segundos**, así que auditar unos pocos dominios es cuestión de segundos.
 
 **🟠 Ubuntu / Pop!_OS / Kali / Debian (Bash):**
 
@@ -350,12 +297,55 @@ deactivate
 |---|---|---|
 | `--domains`, `-d` | Archivo con la lista de dominios **(requerido)** | `-d servers.txt` |
 | `--selectors`, `-s` | Selectores DKIM adicionales | `-s "corp2026 mkt"` |
-| `--resolver`, `-r` | Resolver DNS (por defecto `1.1.1.1`) | `-r 8.8.8.8` |
+| `--deep-dkim` | Activa búsqueda DKIM profunda (~166 selectores) | `--deep-dkim` |
+| `--deep-months` | Meses rotativos para modo profundo | `--deep-months 48` |
+| `--resolver`, `-r` | Resolver DNS general (por defecto `1.1.1.1`) | `-r 8.8.8.8` |
+| `--dnssec-resolvers` | Resolvers validadores DNSSEC (coma) | `--dnssec-resolvers 1.1.1.1,8.8.8.8` |
 | `--output`, `-o` | Carpeta de salida | `-o ~/auditorias/Q2` |
 | `--excel-name` | Nombre del Excel | `--excel-name Audit_2026.xlsx` |
 | `--help`, `-h` | Muestra la ayuda | `-h` |
 
-> 💡 El `run.sh` pasa el archivo de dominios automáticamente. Para usar opciones avanzadas (resolver, selectores, etc.), usa la Opción 2 con el entorno activado.
+---
+
+## 🔎 Modo DKIM profundo (`--deep-dkim`)
+
+DKIM tiene una limitación de diseño: **no es enumerable**. Cada dominio usa un *selector* arbitrario y no existe forma de listar todos los selectores vía DNS. Por eso la herramienta prueba una lista de selectores conocidos.
+
+| Modo | Selectores probados | Velocidad | Cuándo usarlo |
+|---|---|---|---|
+| **Balanceado** (default) | ~55 comunes | Rápido | Auditoría rutinaria |
+| **Profundo** (`--deep-dkim`) | ~166 (incluye rotativos por fecha) | Más lento | Dominios grandes con selectores custom o rotativos |
+
+El modo profundo añade selectores rotativos por fecha (patrón `YYYYMMDD`) usados por **Google, Amazon SES, SparkPost, Postmark** y muchos otros, además de decenas de proveedores adicionales (Marketo, Pardot, Brevo, Campaign Monitor, etc.).
+
+```bash
+# Manual
+python email_dns_audit_neon.py --domains servers.txt --deep-dkim
+
+# Con run.sh
+./run.sh servers.txt deep
+```
+
+> 💡 **Si un dominio muestra "DKIM: No detectado"** no significa que carezca de DKIM: probablemente usa un selector fuera de la lista. Reintenta con `--deep-dkim`, o lee el header `DKIM-Signature: s=...` de un correo real y pásalo con `--selectors`.
+
+---
+
+## 🔐 Validación DNSSEC multi-resolver
+
+El bit **AD** (Authenticated Data) que confirma la validación DNSSEC **depende del resolver** que responde. Para evitar falsos negativos por un resolver o red específicos, la herramienta prueba **internamente** contra varios resolvers validadores en una sola pasada:
+
+- **Cloudflare** (1.1.1.1)
+- **Google** (8.8.8.8)
+- **Quad9** (9.9.9.9)
+
+Si **cualquiera** confirma el bit AD, el dominio se marca como **Secure**. Todo ocurre en una sola ejecución, generando **una sola carpeta de salida** (sin duplicidad).
+
+```bash
+# Personalizar los resolvers validadores
+python email_dns_audit_neon.py --domains servers.txt --dnssec-resolvers "1.1.1.1,8.8.8.8"
+```
+
+> ℹ️ **Dato importante:** algunos gigantes tecnológicos (Google, Amazon, Microsoft) **NO firman sus dominios principales con DNSSEC** por decisión deliberada (riesgo de amplificación DDoS y consideraciones operativas a su escala). Por eso `google.com` puede aparecer como "DNSSEC: No implementado" — y es correcto. Tu perfil de riesgo probablemente sí justifica implementarlo.
 
 ---
 
@@ -373,6 +363,7 @@ audit_20260630_143022/
     └── midominio.com/
         ├── whois.txt
         ├── dig_dmarc.txt
+        ├── dnssec_validation.txt                  ← volcado de los 3 resolvers
         └── ... (cada consulta con timestamp ISO 8601)
 ```
 
@@ -380,7 +371,7 @@ audit_20260630_143022/
 
 | Hoja | Contenido |
 |---|---|
-| **Portada** | Metadata, marco normativo, convenciones |
+| **Portada** | Metadata, marco normativo, convenciones, modo DKIM usado |
 | **Inventario_Dominios** | Registrar, expiración, DNS, DNSSEC |
 | **SPF / DKIM / DMARC / DNSSEC** | Una hoja por control con estado y severidad |
 | **Complementos** | MTA-STS, TLS-RPT, BIMI |
@@ -406,7 +397,7 @@ libreoffice audit_*/Auditoria_Email_Authentication_*.xlsx
 
 **Causa:** la primera instalación falló al instalar dependencias (típico del problema `python3-venv` en Ubuntu), por lo que el entorno quedó vacío.
 
-**Solución:** confirma qué hay en el entorno:
+**Solución:**
 
 ```bash
 source venv-email-audit/bin/activate    # o activate.fish en Fish
@@ -414,33 +405,34 @@ pip list | grep -Ei "rich|dnspython|cryptography|httpx|whois|aiodns|openpyxl"
 deactivate
 ```
 
-- **Si aparecen las 7 librerías:** el entorno está bien. Usa `./run.sh` de aquí en adelante, **no** `setup.sh`.
-- **Si NO aparecen:** corre `./setup.sh` **una última vez** con la versión corregida. Quedará permanente.
+- **Si aparecen las 7 librerías:** el entorno está bien. Usa `./run.sh` de aquí en adelante.
+- **Si NO aparecen:** corre `./setup.sh` **una última vez**. Quedará permanente.
 
----
+### ❌ "DKIM: No detectado" en un dominio que sí tiene DKIM
+
+**Causa:** el dominio usa un selector fuera de la lista balanceada.
+
+**Solución:** reintenta con el modo profundo o pasa el selector real:
+
+```bash
+./run.sh servers.txt deep
+# o, si conoces el selector real (del header DKIM-Signature):
+python email_dns_audit_neon.py --domains servers.txt --selectors "20240115 nombreselector"
+```
 
 ### ❌ `error: externally-managed-environment`
 
-**Causa:** intentaste instalar con `pip` sin activar el entorno virtual (protección PEP 668).
+**Causa:** intentaste instalar con `pip` sin activar el entorno virtual (PEP 668).
 
-**Solución:** activa el entorno antes de `pip install`:
+**Solución:**
 
 ```bash
-# Bash
-source venv-email-audit/bin/activate
-# Fish
-source venv-email-audit/bin/activate.fish
-
+source venv-email-audit/bin/activate     # Bash
+source venv-email-audit/bin/activate.fish # Fish
 pip install -r requirements.txt
 ```
 
----
-
 ### ❌ `No se encontró pip en el entorno virtual` (Ubuntu/Pop!_OS/Kali)
-
-**Causa:** falta `python3-venv`, por lo que el entorno se creó sin pip.
-
-**Solución:**
 
 ```bash
 sudo apt install -y python3-venv python3-pip
@@ -448,68 +440,51 @@ rm -rf venv-email-audit
 ./setup.sh
 ```
 
----
-
 ### ❌ `"case" builtin not inside of switch block` (CachyOS/Arch)
 
 **Causa:** usas Fish y ejecutaste el script de activación de Bash.
-
-**Solución:**
 
 ```fish
 source venv-email-audit/bin/activate.fish
 ```
 
----
-
 ### ❌ `Permission denied` al ejecutar `./setup.sh` o `./run.sh`
-
-**Causa:** falta permiso de ejecución (común tras descargar de GitHub web).
-
-**Solución:**
 
 ```bash
 chmod +x setup.sh run.sh
 ```
 
----
-
 ### ❌ `requirements.txt` con `&gt;` o `&lt;`
-
-**Causa:** entidades HTML por copy-paste desde una web.
-
-**Solución:**
 
 ```bash
 sed -i 's/&gt;/>/g; s/&lt;/</g; s/&amp;/\&/g' requirements.txt
 ```
 
----
-
 ### ⚠️ WHOIS devuelve `N/D` para dominios `.gt`, `.cr`, etc.
 
-**Causa:** algunos ccTLD no exponen datos completos vía WHOIS.
-
-**Solución:** es normal. Verifica esos datos en el panel de tu registrar.
+**Causa:** algunos ccTLD no exponen datos completos vía WHOIS. Es normal; verifícalos en el panel de tu registrar.
 
 ---
 
 ## ❓ Preguntas frecuentes
 
 **¿Cuándo uso `setup.sh` y cuándo `run.sh`?**
-`setup.sh` una sola vez para instalar. `run.sh` cada vez que auditas. Nunca necesitas repetir `setup.sh`.
+`setup.sh` una sola vez para instalar. `run.sh` cada vez que auditas.
+
+**¿Conviene ejecutar manualmente o con `run.sh`?**
+Para auditorías rutinarias, `run.sh` es lo más simple. Para diagnóstico puntual o para usar opciones avanzadas (resolver, selectores, deep-dkim), es **aconsejable la ejecución manual** con el entorno activado. Cada dominio tarda menos de 30 segundos.
 
 **¿El `run.sh` funciona en Fish y en Bash?**
-Sí. Usa el Python del entorno directamente, así que no depende de tu shell ni requiere activar el venv.
+Sí. Usa el Python del entorno directamente, así que no depende de tu shell.
 
-**¿Necesito conocimientos de programación?**
-No. Con `./setup.sh` una vez y `./run.sh` para auditar es suficiente.
+**¿Por qué google.com sale sin DNSSEC/BIMI si es líder en seguridad?**
+Es correcto. Google no firma sus dominios principales con DNSSEC por decisión deliberada (riesgo de amplificación DDoS a su escala), y no publica BIMI en `google.com` porque no envía correo comercial masivo desde el dominio raíz. La ausencia de un control puede ser una decisión de gestión de riesgo, no un error.
+
+**¿Cuánto tarda?**
+Menos de 30 segundos por dominio en modo balanceado. El modo `--deep-dkim` es más lento por probar ~166 selectores.
 
 **¿Modifica algo en mis dominios o DNS?**
 No. La herramienta **solo lee** (consultas DNS y HTTP públicas). Nunca escribe.
-
-**¿Cuánto tarda?**
-~10-15 segundos por dominio gracias a consultas asíncronas.
 
 **¿Puedo auditar dominios que no son míos?**
 Técnicamente sí (solo datos públicos), pero **audita únicamente dominios propios o autorizados**.
