@@ -11,6 +11,7 @@
  Fecha   : 2026-09-01
  Cambios v3.3:
    - Integración rigurosa de RDAP (RFC 7480-7484 / RFC 9082-9083) sobre HTTPS.
+   - Bootstrap autoritativo de TLDs (Verisign, PIR, Nominet, Identity Digital, rdap.org).
    - Extracción de Registrar, Expiration/Creation y Entidad Registrante (Brand).
    - Inferencia heurística de Brand e Internal Owner (Seguridad/TI) para inventario.
    - Soporte bilingüe completo (Español / Inglés) vía flag `--lang [es|en]`.
@@ -85,6 +86,11 @@ C_ACC = "2B96CD"; C_SOFT = "8FC2E0"; C_BAND = "EAF3FA"; C_WHITE = "FFFFFF"
 NM = "#ff00ff"; NC = "#00ffff"; NG = "#39ff14"; NO = "#ff6600"
 NR = "#ff003c"; NY = "#ffff00"; NP = "#9d00ff"
 
+RDAP_HEADERS = {
+    "User-Agent": "Email-DNS-Audit-Neon/3.3 (Security Audit Engine)",
+    "Accept": "application/rdap+json, application/json"
+}
+
 COMMON_SELECTORS = [
     # Microsoft 365 / Outlook
     "selector1", "selector2",
@@ -132,6 +138,24 @@ def derive_brand_from_domain(domain: str) -> str:
     else:
         raw_brand = parts[0]
     return raw_brand.capitalize()
+
+
+def get_rdap_candidate_urls(domain: str) -> List[str]:
+    """Generates authoritative and bootstrap RDAP URLs based on TLD."""
+    parts = domain.lower().split(".")
+    tld = parts[-1]
+    urls = []
+    if tld in ("com", "net"):
+        urls.append(f"https://rdap.verisign.com/{tld}/v1/domain/{domain}")
+    elif tld == "org":
+        urls.append(f"https://rdap.publicinterestregistry.org/rdap/domain/{domain}")
+    elif tld in ("info", "biz", "mobi", "pro", "asia", "io"):
+        urls.append(f"https://rdap.identitydigital.services/rdap/domain/{domain}")
+    elif tld in ("uk", "co.uk", "org.uk"):
+        urls.append(f"https://rdap.nominet.uk/rdap/domain/{domain}")
+    urls.append(f"https://rdap.org/domain/{domain}")
+    urls.append(f"https://rdap.iana.org/domain/{domain}")
+    return urls
 
 
 def generate_deep_selectors(months_back: int = 30) -> List[str]:
@@ -380,7 +404,7 @@ def format_iso_date(raw_date: Optional[str]) -> str:
 async def check_whois_rdap(domain: str, http: httpx.AsyncClient, outdir: Path, resolver: str, t: Optional[Any] = None) -> Dict[str, Any]:
     """
     Evaluates Domain Registration, Registrar, Dates and Entity/Brand using:
-      1. RDAP (RFC 7480-7484 / RFC 9082-9083) over HTTPS (port 443).
+      1. Authoritative TLD + Universal RDAP (RFC 7480-7484 / RFC 9082-9083) over HTTPS.
       2. Asynchronous fallback to socket WHOIS (port 43) with timeout protection.
     """
     if not t: t = lambda k: k
@@ -394,69 +418,70 @@ async def check_whois_rdap(domain: str, http: httpx.AsyncClient, outdir: Path, r
         "source": "None"
     }
 
-    # --- Tier 1: RDAP over HTTPS ---
-    rdap_url = f"https://rdap.org/domain/{domain}"
-    try:
-        resp = await http.get(rdap_url, timeout=7.0, follow_redirects=True)
-        if resp.status_code == 200:
-            rdap_data = resp.json()
-            write_evidence(outdir, domain, "rdap.json", f"GET {rdap_url}", json.dumps(rdap_data, indent=2), resolver)
-            
-            # 1. Parse Events (dates)
-            events = {e.get("eventAction"): e.get("eventDate") for e in rdap_data.get("events", []) if isinstance(e, dict)}
-            if "registration" in events:
-                res["created"] = format_iso_date(events["registration"])
-            if "expiration" in events:
-                res["expires"] = format_iso_date(events["expiration"])
+    # --- Tier 1: Multi-Candidate RDAP over HTTPS ---
+    for rdap_url in get_rdap_candidate_urls(domain):
+        try:
+            resp = await http.get(rdap_url, headers=RDAP_HEADERS, timeout=5.0, follow_redirects=True)
+            if resp.status_code == 200:
+                rdap_data = resp.json()
+                write_evidence(outdir, domain, "rdap.json", f"GET {rdap_url}", json.dumps(rdap_data, indent=2), resolver)
+                
+                # 1. Parse Events (dates)
+                events = {e.get("eventAction"): e.get("eventDate") for e in rdap_data.get("events", []) if isinstance(e, dict)}
+                if "registration" in events:
+                    res["created"] = format_iso_date(events["registration"])
+                if "expiration" in events:
+                    res["expires"] = format_iso_date(events["expiration"])
 
-            # 2. Parse Entities (Registrar & Registrant Organization)
-            registrar_name = None
-            registrant_org = None
-            for entity in rdap_data.get("entities", []):
-                roles = entity.get("roles", [])
-                vcards = entity.get("vcardArray", [None, []])
-                card_list = vcards[1] if (len(vcards) > 1 and isinstance(vcards[1], list)) else []
-                fn = next((v[3] for v in card_list if isinstance(v, list) and len(v) > 3 and v[0] == "fn"), None)
-                org = next((v[3] for v in card_list if isinstance(v, list) and len(v) > 3 and v[0] == "org"), None)
+                # 2. Parse Entities (Registrar & Registrant Organization)
+                registrar_name = None
+                registrant_org = None
+                for entity in rdap_data.get("entities", []):
+                    roles = entity.get("roles", [])
+                    vcards = entity.get("vcardArray", [None, []])
+                    card_list = vcards[1] if (len(vcards) > 1 and isinstance(vcards[1], list)) else []
+                    fn = next((v[3] for v in card_list if isinstance(v, list) and len(v) > 3 and v[0] == "fn"), None)
+                    org = next((v[3] for v in card_list if isinstance(v, list) and len(v) > 3 and v[0] == "org"), None)
 
-                if "registrar" in roles:
-                    registrar_name = fn or org or entity.get("handle")
-                if "registrant" in roles or "administrative" in roles:
-                    registrant_org = org or fn
+                    if "registrar" in roles:
+                        registrar_name = fn or org or entity.get("handle")
+                    if "registrant" in roles or "administrative" in roles:
+                        registrant_org = org or fn
 
-            if registrar_name:
-                res["registrar"] = str(registrar_name)[:150]
+                if registrar_name:
+                    res["registrar"] = str(registrar_name)[:150]
 
-            # 3. Determine Brand / Entity
-            privacy_keywords = ["privacy", "proxy", "whoisguard", "withheld", "redacted", "domains by proxy", "contact privacy"]
-            if registrant_org:
-                is_private = any(k in registrant_org.lower() for k in privacy_keywords)
-                if is_private:
-                    res["brand"] = f"{derive_brand_from_domain(domain)} ({t('privacy_protected')})"
+                # 3. Determine Brand / Entity
+                privacy_keywords = ["privacy", "proxy", "whoisguard", "withheld", "redacted", "domains by proxy", "contact privacy"]
+                if registrant_org:
+                    is_private = any(k in registrant_org.lower() for k in privacy_keywords)
+                    if is_private:
+                        res["brand"] = f"{derive_brand_from_domain(domain)} ({t('privacy_protected')})"
+                    else:
+                        res["brand"] = str(registrant_org)[:150]
                 else:
-                    res["brand"] = str(registrant_org)[:150]
-            else:
-                res["brand"] = derive_brand_from_domain(domain)
+                    res["brand"] = derive_brand_from_domain(domain)
 
-            # 4. Status
-            status_list = rdap_data.get("status", [])
-            if status_list:
-                res["status"] = "; ".join(str(s) for s in status_list[:3])
+                # 4. Status
+                status_list = rdap_data.get("status", [])
+                if status_list:
+                    res["status"] = "; ".join(str(s) for s in status_list[:3])
 
-            # 5. SecureDNS
-            secure_dns = rdap_data.get("secureDNS", {})
-            if isinstance(secure_dns, dict):
-                res["dnssec_whois"] = "Signed" if secure_dns.get("delegationSigned") else "Unsigned"
+                # 5. SecureDNS
+                secure_dns = rdap_data.get("secureDNS", {})
+                if isinstance(secure_dns, dict):
+                    res["dnssec_whois"] = "Signed" if secure_dns.get("delegationSigned") else "Unsigned"
 
-            res["source"] = "RDAP (HTTPS)"
-            return res
-    except Exception as e:
-        write_evidence(outdir, domain, "rdap.json", f"GET {rdap_url}", f"ERROR: {e}", resolver)
+                res["source"] = f"RDAP ({rdap_url})"
+                if res["registrar"] != "N/D" or res["expires"] != "N/D":
+                    return res
+        except Exception:
+            continue
 
     # --- Tier 2: WHOIS Fallback (Socket Port 43) ---
     loop = asyncio.get_event_loop()
     try:
-        w = await asyncio.wait_for(loop.run_in_executor(None, whois_lib.whois, domain), timeout=4.0)
+        w = await asyncio.wait_for(loop.run_in_executor(None, whois_lib.whois, domain), timeout=3.0)
         raw = str(w)
         reg = getattr(w, "registrar", None) or res["registrar"]
         cr = getattr(w, "creation_date", None)
@@ -468,11 +493,11 @@ async def check_whois_rdap(domain: str, http: httpx.AsyncClient, outdir: Path, r
         ds = getattr(w, "dnssec", None) or res["dnssec_whois"]
         org = getattr(w, "org", None) or getattr(w, "name", None)
 
-        if org:
+        if org and not res.get("brand"):
             res["brand"] = str(org)[:150]
 
         write_evidence(outdir, domain, "whois.txt", f"whois {domain}", raw, resolver)
-        res["registrar"] = str(reg)[:150] if reg else "N/D"
+        res["registrar"] = str(reg)[:150] if reg else res["registrar"]
         res["created"] = str(cr)[:10] if cr else res["created"]
         res["expires"] = str(ex)[:10] if ex else res["expires"]
         res["status"] = str(st)[:150] if st else res["status"]
