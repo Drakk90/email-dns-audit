@@ -15,7 +15,7 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "app_subtitle": "Auditoría DNS / Autenticación de Correo",
         "author": "Eduardo Recinos",
         "ciso": "VCISO",
-        "cli_desc": "Auditoría DNS y Autenticación de Correo (SPF, DMARC, DKIM, DNSSEC, MTA-STS, TLS-RPT, BIMI).",
+        "cli_desc": "Auditoría DNS y Autenticación de Correo (SPF, DMARC, DKIM, DNSSEC, MTA-STS, TLS-RPT, BIMI, RDAP).",
         "cli_domains_help": "Archivo con lista de dominios (uno por línea).",
         "cli_domain_help": "Auditar un único dominio específico.",
         "cli_outdir_help": "Carpeta donde se guardarán los resultados.",
@@ -49,6 +49,8 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "no_mx": "Sin MX",
         "production": "Producción",
         "manual_validation": "Validar manualmente",
+        "default_internal_owner": "Seguridad / TI",
+        "privacy_protected": "Privacidad / Redactado",
 
         # --- Cumplimiento Global ---
         "compliance_high": "Alto ({pct}%)",
@@ -123,14 +125,14 @@ MESSAGES: Dict[str, Dict[str, str]] = {
 
         # --- Excel Sheets & Headers ---
         "sheet_summary": "Resumen",
-        "sheet_inventory": "Inventario",
-        "sheet_spf": "Detalle SPF",
-        "sheet_dmarc": "Detalle DMARC",
-        "sheet_dkim": "Detalle DKIM",
-        "sheet_dnssec": "DNSSEC & DANE",
-        "sheet_mtasts": "MTA-STS & TLS",
+        "sheet_inventory": "Inventario_Dominios",
+        "sheet_spf": "SPF",
+        "sheet_dmarc": "DMARC",
+        "sheet_dkim": "DKIM",
+        "sheet_dnssec": "DNSSEC",
+        "sheet_mtasts": "Complementos",
         "sheet_bimi": "BIMI",
-        "sheet_senders": "Remitentes Autorizados",
+        "sheet_senders": "Remitentes_Autorizados",
         "sheet_findings": "Hallazgos",
         "sheet_glossary": "Glosario",
 
@@ -148,7 +150,7 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "app_subtitle": "DNS Audit / Email Authentication",
         "author": "Eduardo Recinos",
         "ciso": "VCISO",
-        "cli_desc": "DNS Audit and Email Authentication (SPF, DMARC, DKIM, DNSSEC, MTA-STS, TLS-RPT, BIMI).",
+        "cli_desc": "DNS Audit and Email Authentication (SPF, DMARC, DKIM, DNSSEC, MTA-STS, TLS-RPT, BIMI, RDAP).",
         "cli_domains_help": "File containing domain list (one per line).",
         "cli_domain_help": "Audit a single specific domain.",
         "cli_outdir_help": "Output folder where results will be saved.",
@@ -182,6 +184,8 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "no_mx": "No MX",
         "production": "Production",
         "manual_validation": "Validate manually",
+        "default_internal_owner": "Security / IT",
+        "privacy_protected": "Privacy / Redacted",
 
         # --- Global Compliance ---
         "compliance_high": "High ({pct}%)",
@@ -256,14 +260,14 @@ MESSAGES: Dict[str, Dict[str, str]] = {
 
         # --- Excel Sheets & Headers ---
         "sheet_summary": "Summary",
-        "sheet_inventory": "Inventory",
-        "sheet_spf": "SPF Details",
-        "sheet_dmarc": "DMARC Details",
-        "sheet_dkim": "DKIM Details",
-        "sheet_dnssec": "DNSSEC & DANE",
-        "sheet_mtasts": "MTA-STS & TLS",
+        "sheet_inventory": "Domain_Inventory",
+        "sheet_spf": "SPF",
+        "sheet_dmarc": "DMARC",
+        "sheet_dkim": "DKIM",
+        "sheet_dnssec": "DNSSEC",
+        "sheet_mtasts": "Addons",
         "sheet_bimi": "BIMI",
-        "sheet_senders": "Authorized Senders",
+        "sheet_senders": "Authorized_Senders",
         "sheet_findings": "Findings",
         "sheet_glossary": "Glossary",
 

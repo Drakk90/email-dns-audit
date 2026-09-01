@@ -2,8 +2,12 @@
 
 Todos los cambios notables en este proyecto se documentan en este archivo siguiendo [Conventional Commits](https://www.conventionalcommits.org/).
 
-## [Unreleased] (v3.3.0)
+## [3.3.0] - 2026-09-01
 ### Added
+- Integración de motor RDAP (RFC 7480-7484 / RFC 9082-9083) sobre HTTPS (puerto 443) con fallback a WHOIS socket.
+- Extracción automática de Registrar, Fecha de Expiración, Creación, y Entidad Registrante (Brand/Entity).
+- Inferencia inteligente de Marca y asignación de Propietario Interno (`Seguridad / TI` / `Security / IT`) en inventario.
+- Selector interactivo de idioma en `run.sh` al iniciar la ejecución.
 - Soporte de internacionalización (i18n) completo: flag `--lang [es|en]` para CLI, tablas Rich y reporte Excel.
 - Documentación bilingüe integral en `README.md` (English / Español).
 - Estructura de versionado y trazabilidad SDD (Zona 1: `Antigravity.md`, `HANDOFF.md`, `CHANGELOG.md`, `DEVLOG.md`).

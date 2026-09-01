@@ -2,23 +2,25 @@
 # -*- coding: utf-8 -*-
 """
 ═══════════════════════════════════════════════════════════════════════════════
- EMAIL DNS AUDIT NEON v3.3 — Excel Unificado & Soporte Bilingüe (EN / ES)
- Auditoria DNS / Email Authentication
+ EMAIL DNS AUDIT NEON v3.3 — Excel Unificado, i18n & RDAP/WHOIS Riguroso
+ Auditoria DNS / Email Authentication / Asset Governance
 ───────────────────────────────────────────────────────────────────────────────
  Autor   : Eduardo Recinos
  CISO    : VCISO
  Version : 3.3
  Fecha   : 2026-09-01
  Cambios v3.3:
+   - Integración rigurosa de RDAP (RFC 7480-7484 / RFC 9082-9083) sobre HTTPS.
+   - Extracción de Registrar, Expiration/Creation y Entidad Registrante (Brand).
+   - Inferencia heurística de Brand e Internal Owner (Seguridad/TI) para inventario.
    - Soporte bilingüe completo (Español / Inglés) vía flag `--lang [es|en]`.
-   - Reporte Excel, consola Rich y severidades 100% internacionalizados.
-   - Mapeo modular de traducciones con `i18n.py`.
-   - Compatibilidad total con workflows SDD y Gentle-AI.
+   - Reporte Excel unificado con pestañas, tablas y formatos condicionales.
 ═══════════════════════════════════════════════════════════════════════════════
 """
-import sys, os, re, time, base64, argparse, asyncio, subprocess, importlib
+import sys, os, re, time, base64, argparse, asyncio, subprocess, importlib, json
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
+from typing import Dict, Any, List, Optional, Tuple
 
 REQUIRED = {
     "rich": "rich>=13.7.0", "dns": "dnspython>=2.4.0",
@@ -28,7 +30,7 @@ REQUIRED = {
 }
 
 
-def check_deps(auto=False):
+def check_deps(auto: bool = False) -> bool:
     missing = []
     for mod, pip_name in REQUIRED.items():
         try:
@@ -119,7 +121,20 @@ COMMON_SELECTORS = [
 console = Console()
 
 
-def generate_deep_selectors(months_back=30):
+def derive_brand_from_domain(domain: str) -> str:
+    """Extracts a clean, capitalized brand name from a domain name."""
+    parts = domain.lower().split(".")
+    if len(parts) >= 2:
+        if parts[-2] in ("com", "co", "org", "gob", "edu", "net", "nom") and len(parts) >= 3:
+            raw_brand = parts[-3]
+        else:
+            raw_brand = parts[-2]
+    else:
+        raw_brand = parts[0]
+    return raw_brand.capitalize()
+
+
+def generate_deep_selectors(months_back: int = 30) -> List[str]:
     deep = set()
     deep.update([
         "google2", "goog", "gmail",
@@ -168,7 +183,7 @@ def generate_deep_selectors(months_back=30):
     return sorted(deep)
 
 
-def map_dkim_service(s):
+def map_dkim_service(s: str) -> str:
     m = {"selector1": "Microsoft 365", "selector2": "Microsoft 365", "google": "Google Workspace",
          "k1": "Mailchimp / SendGrid", "k2": "Mailchimp / SendGrid", "k3": "Mailchimp / SendGrid",
          "smtpapi": "SendGrid", "mandrill": "Mandrill (Mailchimp)",
@@ -201,7 +216,7 @@ def map_dkim_service(s):
     return "Custom"
 
 
-def map_provider_purpose(p, t=None):
+def map_provider_purpose(p: str, t: Optional[Any] = None) -> str:
     if not t: t = lambda k: k
     if p in ("Microsoft 365", "Google Workspace", "Zoho Mail", "Proton Mail"):
         return t("purpose_internal")
@@ -213,7 +228,7 @@ def map_provider_purpose(p, t=None):
     return t("status_to_validate")
 
 
-def map_provider_mechanism(p, t=None):
+def map_provider_mechanism(p: str, t: Optional[Any] = None) -> str:
     if not t: t = lambda k: k
     if p == "Microsoft 365":
         return t("mechanism_m365")
@@ -229,7 +244,7 @@ def map_provider_mechanism(p, t=None):
     return t("status_to_validate")
 
 
-def derive_spf_status(pub, a, lk, v, m, t=None):
+def derive_spf_status(pub: str, a: str, lk: int, v: int, m: str, t: Optional[Any] = None) -> str:
     if not t: t = lambda k: k
     if pub == "no" or m == "si" or a == "+all" or lk > 10 or v > 2:
         return t("status_non_compliant")
@@ -238,7 +253,7 @@ def derive_spf_status(pub, a, lk, v, m, t=None):
     return t("status_compliant")
 
 
-def derive_spf_severity(pub, a, lk, v, m, t=None):
+def derive_spf_severity(pub: str, a: str, lk: int, v: int, m: str, t: Optional[Any] = None) -> str:
     if not t: t = lambda k: k
     if m == "si" or a == "+all": return t("sev_critical")
     if pub == "no" or lk > 10 or a in ("?all", "sin all"): return t("sev_high")
@@ -247,14 +262,14 @@ def derive_spf_severity(pub, a, lk, v, m, t=None):
     return t("sev_info")
 
 
-def derive_dmarc_status(pub, p, sp, pct, rua, t=None):
+def derive_dmarc_status(pub: str, p: str, sp: str, pct: str, rua: str, t: Optional[Any] = None) -> str:
     if not t: t = lambda k: k
     if pub == "no" or p == "none": return t("status_non_compliant")
     if p == "reject" and pct == "100" and rua and sp: return t("status_compliant")
     return t("status_partial")
 
 
-def derive_dmarc_severity(pub, p, sp, pct, rua, t=None):
+def derive_dmarc_severity(pub: str, p: str, sp: str, pct: str, rua: str, t: Optional[Any] = None) -> str:
     if not t: t = lambda k: k
     if pub == "no": return t("sev_critical")
     if p == "none" or not rua: return t("sev_high")
@@ -263,7 +278,7 @@ def derive_dmarc_severity(pub, p, sp, pct, rua, t=None):
     return t("sev_info")
 
 
-def derive_dnssec_status(d, t=None):
+def derive_dnssec_status(d: str, t: Optional[Any] = None) -> str:
     if not t: t = lambda k: k
     if d == "Secure" or d.startswith("Firmado"): return t("status_compliant")
     if d.startswith("Incompleto"): return t("status_partial")
@@ -271,7 +286,7 @@ def derive_dnssec_status(d, t=None):
     return t("status_pending")
 
 
-def derive_dnssec_severity(d, t=None):
+def derive_dnssec_severity(d: str, t: Optional[Any] = None) -> str:
     if not t: t = lambda k: k
     if d.startswith("Bogus"): return t("sev_critical")
     if d.startswith("Incompleto"): return t("sev_high")
@@ -280,7 +295,7 @@ def derive_dnssec_severity(d, t=None):
     return t("sev_medium")
 
 
-def derive_dkim_status(bits, t_flag, rev, t=None):
+def derive_dkim_status(bits: Any, t_flag: str, rev: str, t: Optional[Any] = None) -> str:
     if not t: t = lambda k: k
     if rev.startswith("si"): return t("status_non_compliant")
     if isinstance(bits, int):
@@ -292,7 +307,7 @@ def derive_dkim_status(bits, t_flag, rev, t=None):
     return t("status_compliant")
 
 
-def derive_dkim_severity(bits, t_flag, rev, t=None):
+def derive_dkim_severity(bits: Any, t_flag: str, rev: str, t: Optional[Any] = None) -> str:
     if not t: t = lambda k: k
     if rev.startswith("si"): return t("sev_critical")
     if isinstance(bits, int):
@@ -304,7 +319,7 @@ def derive_dkim_severity(bits, t_flag, rev, t=None):
     return t("sev_info")
 
 
-def derive_mtasts_status(pub, mode, acc, t=None):
+def derive_mtasts_status(pub: str, mode: str, acc: str, t: Optional[Any] = None) -> str:
     if not t: t = lambda k: k
     if pub == "no" or acc == "no" or mode == "none": return t("status_non_compliant")
     if mode == "enforce": return t("status_compliant")
@@ -312,21 +327,21 @@ def derive_mtasts_status(pub, mode, acc, t=None):
     return t("status_pending")
 
 
-def derive_tlsrpt_status(pub, rua, t=None):
+def derive_tlsrpt_status(pub: str, rua: str, t: Optional[Any] = None) -> str:
     if not t: t = lambda k: k
     if pub == "no": return t("status_non_compliant")
     if not rua: return t("status_pending")
     return t("status_compliant")
 
 
-def derive_bimi_status(pub, svg, vmc, t=None):
+def derive_bimi_status(pub: str, svg: str, vmc: str, t: Optional[Any] = None) -> str:
     if not t: t = lambda k: k
     if pub == "no" or not svg or vmc == "No": return t("status_non_compliant")
-    if vmc == "Si" or vmc == "Yes": return t("status_compliant")
+    if vmc in ("Si", "Yes"): return t("status_compliant")
     return t("status_partial")
 
 
-def derive_remit_state(spf, dkim, dmarc, t=None):
+def derive_remit_state(spf: str, dkim: str, dmarc: str, t: Optional[Any] = None) -> str:
     if not t: t = lambda k: k
     y = sum(1 for v in (spf, dkim, dmarc) if v in ("Si", "Yes"))
     n = sum(1 for v in (spf, dkim, dmarc) if v in ("No", "No"))
@@ -336,7 +351,7 @@ def derive_remit_state(spf, dkim, dmarc, t=None):
     return t("status_to_validate")
 
 
-def write_evidence(outdir, domain, filename, command, content, resolver):
+def write_evidence(outdir: Path, domain: str, filename: str, command: str, content: str, resolver: str) -> None:
     path = outdir / "evidencias" / domain / filename
     path.parent.mkdir(parents=True, exist_ok=True)
     h = (f"# Evidencia: {filename}\n# Dominio: {domain}\n# Comando: {command}\n"
@@ -344,35 +359,132 @@ def write_evidence(outdir, domain, filename, command, content, resolver):
     path.write_text(h + (content or "") + "\n", encoding="utf-8")
 
 
-async def q(resolver_obj, name, rdtype):
+async def q(resolver_obj: dns.asyncresolver.Resolver, name: str, rdtype: str) -> Optional[Any]:
     try:
         return await resolver_obj.resolve(name, rdtype, lifetime=6)
     except Exception:
         return None
 
 
-async def check_whois(domain, outdir, resolver):
+def format_iso_date(raw_date: Optional[str]) -> str:
+    if not raw_date:
+        return "N/D"
+    try:
+        clean = raw_date.replace("Z", "+00:00")
+        dt = datetime.fromisoformat(clean)
+        return dt.strftime("%Y-%m-%d")
+    except Exception:
+        return str(raw_date)[:10]
+
+
+async def check_whois_rdap(domain: str, http: httpx.AsyncClient, outdir: Path, resolver: str, t: Optional[Any] = None) -> Dict[str, Any]:
+    """
+    Evaluates Domain Registration, Registrar, Dates and Entity/Brand using:
+      1. RDAP (RFC 7480-7484 / RFC 9082-9083) over HTTPS (port 443).
+      2. Asynchronous fallback to socket WHOIS (port 43) with timeout protection.
+    """
+    if not t: t = lambda k: k
+    res = {
+        "registrar": "N/D",
+        "created": "N/D",
+        "expires": "N/D",
+        "status": "N/D",
+        "dnssec_whois": "N/D",
+        "brand": derive_brand_from_domain(domain),
+        "source": "None"
+    }
+
+    # --- Tier 1: RDAP over HTTPS ---
+    rdap_url = f"https://rdap.org/domain/{domain}"
+    try:
+        resp = await http.get(rdap_url, timeout=7.0, follow_redirects=True)
+        if resp.status_code == 200:
+            rdap_data = resp.json()
+            write_evidence(outdir, domain, "rdap.json", f"GET {rdap_url}", json.dumps(rdap_data, indent=2), resolver)
+            
+            # 1. Parse Events (dates)
+            events = {e.get("eventAction"): e.get("eventDate") for e in rdap_data.get("events", []) if isinstance(e, dict)}
+            if "registration" in events:
+                res["created"] = format_iso_date(events["registration"])
+            if "expiration" in events:
+                res["expires"] = format_iso_date(events["expiration"])
+
+            # 2. Parse Entities (Registrar & Registrant Organization)
+            registrar_name = None
+            registrant_org = None
+            for entity in rdap_data.get("entities", []):
+                roles = entity.get("roles", [])
+                vcards = entity.get("vcardArray", [None, []])
+                card_list = vcards[1] if (len(vcards) > 1 and isinstance(vcards[1], list)) else []
+                fn = next((v[3] for v in card_list if isinstance(v, list) and len(v) > 3 and v[0] == "fn"), None)
+                org = next((v[3] for v in card_list if isinstance(v, list) and len(v) > 3 and v[0] == "org"), None)
+
+                if "registrar" in roles:
+                    registrar_name = fn or org or entity.get("handle")
+                if "registrant" in roles or "administrative" in roles:
+                    registrant_org = org or fn
+
+            if registrar_name:
+                res["registrar"] = str(registrar_name)[:150]
+
+            # 3. Determine Brand / Entity
+            privacy_keywords = ["privacy", "proxy", "whoisguard", "withheld", "redacted", "domains by proxy", "contact privacy"]
+            if registrant_org:
+                is_private = any(k in registrant_org.lower() for k in privacy_keywords)
+                if is_private:
+                    res["brand"] = f"{derive_brand_from_domain(domain)} ({t('privacy_protected')})"
+                else:
+                    res["brand"] = str(registrant_org)[:150]
+            else:
+                res["brand"] = derive_brand_from_domain(domain)
+
+            # 4. Status
+            status_list = rdap_data.get("status", [])
+            if status_list:
+                res["status"] = "; ".join(str(s) for s in status_list[:3])
+
+            # 5. SecureDNS
+            secure_dns = rdap_data.get("secureDNS", {})
+            if isinstance(secure_dns, dict):
+                res["dnssec_whois"] = "Signed" if secure_dns.get("delegationSigned") else "Unsigned"
+
+            res["source"] = "RDAP (HTTPS)"
+            return res
+    except Exception as e:
+        write_evidence(outdir, domain, "rdap.json", f"GET {rdap_url}", f"ERROR: {e}", resolver)
+
+    # --- Tier 2: WHOIS Fallback (Socket Port 43) ---
     loop = asyncio.get_event_loop()
     try:
-        w = await loop.run_in_executor(None, whois_lib.whois, domain)
+        w = await asyncio.wait_for(loop.run_in_executor(None, whois_lib.whois, domain), timeout=4.0)
         raw = str(w)
-        reg = getattr(w, "registrar", None) or "N/D"
+        reg = getattr(w, "registrar", None) or res["registrar"]
         cr = getattr(w, "creation_date", None)
         if isinstance(cr, list): cr = cr[0] if cr else None
         ex = getattr(w, "expiration_date", None)
         if isinstance(ex, list): ex = ex[0] if ex else None
-        st = getattr(w, "status", None) or "N/D"
+        st = getattr(w, "status", None) or res["status"]
         if isinstance(st, list): st = ";".join(str(x) for x in st[:3])
-        ds = getattr(w, "dnssec", None) or "N/D"
+        ds = getattr(w, "dnssec", None) or res["dnssec_whois"]
+        org = getattr(w, "org", None) or getattr(w, "name", None)
+
+        if org:
+            res["brand"] = str(org)[:150]
+
         write_evidence(outdir, domain, "whois.txt", f"whois {domain}", raw, resolver)
-        return {"registrar": str(reg)[:200], "created": str(cr) if cr else "N/D",
-                "expires": str(ex) if ex else "N/D", "status": str(st)[:200], "dnssec_whois": str(ds)}
+        res["registrar"] = str(reg)[:150] if reg else "N/D"
+        res["created"] = str(cr)[:10] if cr else res["created"]
+        res["expires"] = str(ex)[:10] if ex else res["expires"]
+        res["status"] = str(st)[:150] if st else res["status"]
+        res["dnssec_whois"] = str(ds) if ds else res["dnssec_whois"]
+        res["source"] = "WHOIS (Port 43)"
     except Exception as e:
         write_evidence(outdir, domain, "whois.txt", f"whois {domain}", f"ERROR: {e}", resolver)
-        return {"registrar": "N/D", "created": "N/D", "expires": "N/D", "status": "N/D", "dnssec_whois": "N/D"}
+
+    return res
 
 
-async def check_ns_soa(domain, ro, outdir, ip):
+async def check_ns_soa(domain: str, ro: dns.asyncresolver.Resolver, outdir: Path, ip: str) -> Dict[str, Any]:
     ns = await q(ro, domain, "NS")
     soa = await q(ro, domain, "SOA")
     ns_list = sorted([str(r.target).rstrip(".") for r in ns]) if ns else []
@@ -395,7 +507,7 @@ async def check_ns_soa(domain, ro, outdir, ip):
     return {"ns_list": ns_str, "soa_serial": soa_serial, "ns_provider": prov}
 
 
-async def _probe_ad_bit(domain, resolver_ip):
+async def _probe_ad_bit(domain: str, resolver_ip: str) -> Tuple[str, str, str]:
     ad = "no"; status = "N/D"; dump = ""
     try:
         query = dns.message.make_query(domain, "A", want_dnssec=True)
@@ -417,7 +529,7 @@ async def _probe_ad_bit(domain, resolver_ip):
     return ad, status, dump
 
 
-async def check_dnssec(domain, ro, outdir, ip, dnssec_resolvers=None):
+async def check_dnssec(domain: str, ro: dns.asyncresolver.Resolver, outdir: Path, ip: str, dnssec_resolvers: Optional[List[str]] = None) -> Dict[str, Any]:
     dk = await q(ro, domain, "DNSKEY")
     ds_a = await q(ro, domain, "DS")
     dk_pub = "si" if dk else "no"
@@ -473,7 +585,7 @@ async def check_dnssec(domain, ro, outdir, ip, dnssec_resolvers=None):
             "algos": algos_s, "diag": diag}
 
 
-async def check_spf(domain, ro, outdir, ip):
+async def check_spf(domain: str, ro: dns.asyncresolver.Resolver, outdir: Path, ip: str) -> Dict[str, Any]:
     ans = await q(ro, domain, "TXT")
     txts = []
     if ans:
@@ -523,7 +635,7 @@ async def check_spf(domain, ro, outdir, ip):
     return r
 
 
-async def check_dkim(domain, sels, ro, outdir, ip, counter, deep=False, t=None):
+async def check_dkim(domain: str, sels: List[str], ro: dns.asyncresolver.Resolver, outdir: Path, ip: str, counter: List[int], deep: bool = False, t: Optional[Any] = None) -> Dict[str, Any]:
     if not t: t = lambda k: k
     found = []
     probed = 0
@@ -545,7 +657,7 @@ async def check_dkim(domain, sels, ro, outdir, ip, counter, deep=False, t=None):
         pv = mp.group(1) if mp else ""
         kv = mk.group(1) if mk else "rsa"
         tv = mt.group(1) if mt else "-"
-        rev = "no"; bits = "N/D"
+        rev = "no"; bits: Any = "N/D"
         if not pv:
             rev = "si"
         else:
@@ -567,15 +679,15 @@ async def check_dkim(domain, sels, ro, outdir, ip, counter, deep=False, t=None):
     return {"found": found, "probed": probed, "deep": deep}
 
 
-async def check_dmarc(domain, ro, outdir, ip):
+async def check_dmarc(domain: str, ro: dns.asyncresolver.Resolver, outdir: Path, ip: str) -> Dict[str, Any]:
     ans = await q(ro, f"_dmarc.{domain}", "TXT")
     rec = ""
     if ans:
         for r in ans:
             try:
-                t = b"".join(r.strings).decode("utf-8", errors="replace")
-                if t.lower().startswith("v=dmarc1"):
-                    rec = t; break
+                t_rec = b"".join(r.strings).decode("utf-8", errors="replace")
+                if t_rec.lower().startswith("v=dmarc1"):
+                    rec = t_rec; break
             except Exception:
                 pass
     write_evidence(outdir, domain, "dig_dmarc.txt", f"TXT _dmarc.{domain}", rec, ip)
@@ -591,7 +703,7 @@ async def check_dmarc(domain, ro, outdir, ip):
     return r
 
 
-async def check_mx(domain, ro, outdir, ip):
+async def check_mx(domain: str, ro: dns.asyncresolver.Resolver, outdir: Path, ip: str) -> Dict[str, Any]:
     ans = await q(ro, domain, "MX")
     mxs = []
     if ans:
@@ -611,14 +723,14 @@ async def check_mx(domain, ro, outdir, ip):
     return {"raw": mx_str, "provider": prov}
 
 
-async def check_mtasts(domain, ro, http, outdir, ip):
+async def check_mtasts(domain: str, ro: dns.asyncresolver.Resolver, http: httpx.AsyncClient, outdir: Path, ip: str) -> Dict[str, Any]:
     ans = await q(ro, f"_mta-sts.{domain}", "TXT")
     rec = ""
     if ans:
         for r in ans:
             try:
-                t = b"".join(r.strings).decode("utf-8", errors="replace")
-                if "v=STSv1" in t: rec = t; break
+                t_rec = b"".join(r.strings).decode("utf-8", errors="replace")
+                if "v=STSv1" in t_rec: rec = t_rec; break
             except Exception:
                 pass
     write_evidence(outdir, domain, "mtasts_dns.txt", f"TXT _mta-sts.{domain}", rec, ip)
@@ -642,14 +754,14 @@ async def check_mtasts(domain, ro, http, outdir, ip):
     return r
 
 
-async def check_tlsrpt(domain, ro, outdir, ip):
+async def check_tlsrpt(domain: str, ro: dns.asyncresolver.Resolver, outdir: Path, ip: str) -> Dict[str, Any]:
     ans = await q(ro, f"_smtp._tls.{domain}", "TXT")
     rec = ""
     if ans:
         for r in ans:
             try:
-                t = b"".join(r.strings).decode("utf-8", errors="replace")
-                if "v=TLSRPTv1" in t: rec = t; break
+                t_rec = b"".join(r.strings).decode("utf-8", errors="replace")
+                if "v=TLSRPTv1" in t_rec: rec = t_rec; break
             except Exception:
                 pass
     write_evidence(outdir, domain, "tlsrpt_dns.txt", f"TXT _smtp._tls.{domain}", rec, ip)
@@ -661,14 +773,14 @@ async def check_tlsrpt(domain, ro, outdir, ip):
     return r
 
 
-async def check_bimi(domain, ro, http, outdir, ip):
+async def check_bimi(domain: str, ro: dns.asyncresolver.Resolver, http: httpx.AsyncClient, outdir: Path, ip: str) -> Dict[str, Any]:
     ans = await q(ro, f"default._bimi.{domain}", "TXT")
     rec = ""
     if ans:
         for r in ans:
             try:
-                t = b"".join(r.strings).decode("utf-8", errors="replace")
-                if "v=BIMI1" in t: rec = t; break
+                t_rec = b"".join(r.strings).decode("utf-8", errors="replace")
+                if "v=BIMI1" in t_rec: rec = t_rec; break
             except Exception:
                 pass
     write_evidence(outdir, domain, "bimi_dns.txt", f"TXT default._bimi.{domain}", rec, ip)
@@ -694,12 +806,12 @@ async def check_bimi(domain, ro, http, outdir, ip):
     return r
 
 
-async def audit_domain(domain, args, ro, http, outdir, counters, data, hallazgos, t=None):
+async def audit_domain(domain: str, args: Any, ro: dns.asyncresolver.Resolver, http: httpx.AsyncClient, outdir: Path, counters: Dict[str, Any], data: Dict[str, List[Any]], hallazgos: List[Any], t: Optional[Any] = None) -> Dict[str, Any]:
     if not t: t = lambda k: k
     ip = args.resolver
     dnssec_resolvers = [r.strip() for r in args.dnssec_resolvers.split(",") if r.strip()]
 
-    whois_task = check_whois(domain, outdir, ip)
+    whois_task = check_whois_rdap(domain, http, outdir, ip, t=t)
     ns_soa_task = check_ns_soa(domain, ro, outdir, ip)
     dnssec_task = check_dnssec(domain, ro, outdir, ip, dnssec_resolvers=dnssec_resolvers)
     spf_task = check_spf(domain, ro, outdir, ip)
@@ -733,6 +845,7 @@ async def audit_domain(domain, args, ro, http, outdir, counters, data, hallazgos
     info = {
         "domain": domain, "registrar": whois_res["registrar"], "created": whois_res["created"],
         "expires": whois_res["expires"], "status": whois_res["status"], "dnssec_whois": whois_res["dnssec_whois"],
+        "brand": whois_res.get("brand") or derive_brand_from_domain(domain),
         "ns_list": ns_soa_res["ns_list"], "soa_serial": ns_soa_res["soa_serial"], "ns_provider": ns_soa_res["ns_provider"],
         "dnssec": dnssec_res, "spf": spf_res, "dmarc": dmarc_res, "mx": mx_res,
         "mtasts": mtasts_res, "tlsrpt": tlsrpt_res, "bimi": bimi_res,
@@ -743,7 +856,7 @@ async def audit_domain(domain, args, ro, http, outdir, counters, data, hallazgos
     return info
 
 
-def process_results(info, counters, data, hallazgos, args, t=None):
+def process_results(info: Dict[str, Any], counters: Dict[str, Any], data: Dict[str, List[Any]], hallazgos: List[Any], args: Any, t: Optional[Any] = None) -> None:
     if not t: t = lambda k: k
     domain = info["domain"]
     s = info["spf"]; d = info["dmarc"]; ds = info["dnssec"]
@@ -858,8 +971,10 @@ def process_results(info, counters, data, hallazgos, args, t=None):
     info["cumplimiento"] = cumpl; info["cumplimiento_pct"] = pct
 
     # Inventario y resumen
-    data["inventario"].append([n, domain, t("production"), "", info["registrar"], info["expires"],
-                              t("yes") if info["mx"]["provider"] != "Sin MX" else t("no"), "",
+    brand = info.get("brand") or derive_brand_from_domain(domain)
+    owner = t("default_internal_owner")
+    data["inventario"].append([n, domain, t("production"), brand, info["registrar"], info["expires"],
+                              t("yes") if info["mx"]["provider"] != "Sin MX" else t("no"), owner,
                               info["ns_provider"], ds["dnskey_pub"], ""])
     data["resumen"].append([domain, info["registrar"], info["created"], info["expires"], info["status"],
                            info["dnssec_whois"], info["ns_list"], info["soa_serial"], ds["diag"],
@@ -868,7 +983,7 @@ def process_results(info, counters, data, hallazgos, args, t=None):
                            tl["pub"], bi["pub"], cumpl])
 
 
-def build_excel(outdir, data, hallazgos, stats, args, t=None):
+def build_excel(outdir: Path, data: Dict[str, List[Any]], hallazgos: List[Any], stats: Dict[str, Any], args: Any, t: Optional[Any] = None) -> Path:
     if not t: t = lambda k: k
     wb = Workbook()
     thin = Side(border_style="thin", color="B7C9D6")
@@ -903,18 +1018,18 @@ def build_excel(outdir, data, hallazgos, stats, args, t=None):
     LIST_EST = f'"{c_comp},{c_part},{c_non},{c_na},{c_pend}"'
     LIST_SEV = f'"{s_crit},{s_high},{s_med},{s_low},{s_inf}"'
 
-    def style_header(ws, row, n_cols, fill=FILL_H1, font=F_H1):
+    def style_header(ws: Any, row: int, n_cols: int, fill: Any = FILL_H1, font: Any = F_H1) -> None:
         for c in range(1, n_cols + 1):
             cell = ws.cell(row=row, column=c)
             cell.fill = fill; cell.font = font
             cell.alignment = AC; cell.border = BORDER
         ws.row_dimensions[row].height = 30
 
-    def set_widths(ws, widths):
+    def set_widths(ws: Any, widths: List[int]) -> None:
         for i, w in enumerate(widths, start=1):
             ws.column_dimensions[get_column_letter(i)].width = w
 
-    def cf_status(ws, col, s_row, e_row):
+    def cf_status(ws: Any, col: str, s_row: int, e_row: int) -> None:
         rng = f"{col}{s_row}:{col}{e_row}"
         ws.conditional_formatting.add(rng, CellIsRule(operator="equal", formula=[f'"{c_comp}"'],
             fill=PatternFill("solid", fgColor="C6EFCE"), font=Font(color="006100")))
@@ -927,7 +1042,7 @@ def build_excel(outdir, data, hallazgos, stats, args, t=None):
         ws.conditional_formatting.add(rng, CellIsRule(operator="equal", formula=[f'"{c_pend}"'],
             fill=PatternFill("solid", fgColor="DDEBF7"), font=Font(color="1F4E78")))
 
-    def cf_sev(ws, col, s_row, e_row):
+    def cf_sev(ws: Any, col: str, s_row: int, e_row: int) -> None:
         rng = f"{col}{s_row}:{col}{e_row}"
         ws.conditional_formatting.add(rng, CellIsRule(operator="equal", formula=[f'"{s_crit}"'],
             fill=PatternFill("solid", fgColor="C00000"), font=Font(color="FFFFFF", bold=True)))
@@ -961,7 +1076,7 @@ def build_excel(outdir, data, hallazgos, stats, args, t=None):
         ("DKIM Mode", "Deep (--deep-dkim)" if args.deep_dkim else "Balanced"),
         ("Total Domains", str(stats["total_domains"])),
         ("Total Findings", str(stats["total_findings"])),
-        ("Frameworks / Standards", "ISO/IEC 27001:2022 - NIST CSF 2.0 - NIST SP 800-177 Rev.1 - M3AAWG - RFC 7208/6376/7489"),
+        ("Frameworks / Standards", "ISO/IEC 27001:2022 - NIST CSF 2.0 - NIST SP 800-177 Rev.1 - M3AAWG - RFC 7208/6376/7489/7480"),
         ("Status Conventions", f"{c_comp} - {c_part} - {c_non} - {c_na} - {c_pend}"),
         ("Severity Conventions", f"{s_crit} - {s_high} - {s_med} - {s_low} - {s_inf}"),
     ]
@@ -972,7 +1087,7 @@ def build_excel(outdir, data, hallazgos, stats, args, t=None):
         ws.row_dimensions[r].height = 42 if len(val) > 80 else 22
         r += 1
 
-    def add_sheet(name, headers, rows, status_col=None, sev_col=None, col_widths=None):
+    def add_sheet(name: str, headers: List[str], rows: List[Any], status_col: Optional[str] = None, sev_col: Optional[str] = None, col_widths: Optional[List[int]] = None) -> Any:
         ws_new = wb.create_sheet(name)
         for i, h in enumerate(headers, start=1):
             ws_new.cell(row=1, column=i, value=h)
@@ -1000,10 +1115,10 @@ def build_excel(outdir, data, hallazgos, stats, args, t=None):
         return ws_new
 
     add_sheet(t("sheet_inventory"),
-        ["#", t("col_domain"), "Type", "Brand / Entity", "Registrar", "Expiration Date",
-         "Email Sender", "Internal Owner", "DNS Managed By", "DNSSEC", "Comments"],
+        ["#", t("col_domain"), "Type / Tipo", "Brand / Entity (Marca)", "Registrar", "Expiration Date (Expira)",
+         "Email Sender (Envia)", "Internal Owner (Propietario)", "DNS Managed By", "DNSSEC", "Comments"],
         data["inventario"],
-        col_widths=[5, 28, 16, 22, 22, 18, 12, 22, 22, 12, 40])
+        col_widths=[5, 28, 16, 26, 24, 20, 14, 22, 22, 12, 40])
 
     add_sheet(t("sheet_spf"),
         ["#", t("col_domain"), "SPF Record", "All Mechanism", "DNS Lookups",
@@ -1136,7 +1251,7 @@ def build_excel(outdir, data, hallazgos, stats, args, t=None):
     return excel_path
 
 
-def banner(t=None):
+def banner(t: Optional[Any] = None) -> Panel:
     if not t: t = lambda k: k
     art = (f"[bold {NM}]╔══════════════════════════════════════════════════════════════╗[/]\n"
            f"[bold {NM}]║[/]  [bold {NC}]E M A I L[/]  [bold {NG}]D N S[/]  [bold {NO}]A U D I T[/]  [bold {NY}]v 3 . 3[/]            [bold {NM}]║[/]\n"
@@ -1147,7 +1262,7 @@ def banner(t=None):
     return Panel(art, border_style=NM, box=DOUBLE, padding=(0, 1))
 
 
-def status_bar(domain, idx, total, findings, start, t=None):
+def status_bar(domain: str, idx: int, total: int, findings: int, start: float, t: Optional[Any] = None) -> Panel:
     if not t: t = lambda k: k
     el = int(time.time() - start); mins, secs = divmod(el, 60)
     pct = (idx / total * 100) if total else 0
@@ -1159,7 +1274,7 @@ def status_bar(domain, idx, total, findings, start, t=None):
                  border_style=NC, box=ROUNDED, padding=(0, 1))
 
 
-def render_panel(info, t=None):
+def render_panel(info: Dict[str, Any], t: Optional[Any] = None) -> Panel:
     if not t: t = lambda k: k
     s = info["spf"]; dm = info["dmarc"]; dns_d = info["dnssec"]
     mt = info["mtasts"]; tl = info["tlsrpt"]; bi = info["bimi"]
@@ -1171,7 +1286,7 @@ def render_panel(info, t=None):
     tbl.add_column("Control", style=Style(color=NC, bold=True), width=12)
     tbl.add_column("Status / Estado", width=56)
 
-    def cell(x, l):
+    def cell(x: str, l: str) -> str:
         if l == "ok": return f"[{NG}]✔ {x}[/]"
         if l == "warn": return f"[{NY}]◐ {x}[/]"
         if l == "fail": return f"[{NR}]✘ {x}[/]"
@@ -1235,7 +1350,7 @@ def render_panel(info, t=None):
     return Panel(tbl, title=title, border_style=color, box=DOUBLE, padding=(0, 1))
 
 
-def final_panel(stats, paths, elapsed, t=None):
+def final_panel(stats: Dict[str, Any], paths: Dict[str, Any], elapsed: float, t: Optional[Any] = None) -> Panel:
     if not t: t = lambda k: k
     mins, secs = divmod(int(elapsed), 60)
     sev_t = Table(box=ROUNDED, border_style=NP, show_header=True,
@@ -1256,7 +1371,7 @@ def final_panel(stats, paths, elapsed, t=None):
                  border_style=NM, box=DOUBLE, padding=(1, 2))
 
 
-async def run_audit(args):
+async def run_audit(args: Any) -> None:
     t = get_translator(args.lang)
     outdir = Path(args.output)
     outdir.mkdir(parents=True, exist_ok=True)
@@ -1267,12 +1382,12 @@ async def run_audit(args):
         console.print(f"[{NR}]ERROR: Sin dominios / No domains found.[/]")
         return
     data = {k: [] for k in ["spf", "dkim", "dmarc", "dnssec", "mtasts", "tlsrpt", "bimi", "remit", "resumen", "inventario"]}
-    hallazgos = []
+    hallazgos: List[Any] = []
     ro = dns.asyncresolver.Resolver()
     ro.nameservers = [args.resolver]; ro.timeout = 5; ro.lifetime = 8
     http = httpx.AsyncClient(verify=True, follow_redirects=True)
     counters = {"dom_num": 0, "dkim_row": [0], "mtasts_ev": 0, "tlsrpt_ev": 0, "remit_row": 0}
-    stats = {"total_domains": 0, "total_findings": 0, "sev_count": {}}
+    stats: Dict[str, Any] = {"total_domains": 0, "total_findings": 0, "sev_count": {}}
     start = time.time()
     console.print(banner(t=t))
     if args.deep_dkim:
@@ -1302,8 +1417,8 @@ async def run_audit(args):
     console.print()
 
 
-def parse_args():
-    p = argparse.ArgumentParser(description="Email DNS Audit v3.3 - Unified Excel & Bilingual Support",
+def parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(description="Email DNS Audit v3.3 - Unified Excel, Bilingual Support & RDAP",
                                 formatter_class=argparse.RawTextHelpFormatter)
     p.add_argument("--domains", "-d", help="Archivo con dominios / Domain list file")
     p.add_argument("--lang", "-l", choices=["es", "en"], default="es",
@@ -1326,7 +1441,7 @@ def parse_args():
     return p.parse_args()
 
 
-def main():
+def main() -> None:
     args = parse_args()
     if not args.domains:
         console.print(f"[{NR}]ERROR: --domains requerido / --domains required[/]")

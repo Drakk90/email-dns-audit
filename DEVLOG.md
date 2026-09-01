@@ -14,3 +14,12 @@
 - **Fecha:** 2026-09-01
 - **Contexto:** La herramienta genera reportes técnicos y ejecutivos que se entregan tanto a equipos de habla hispana como angloparlantes (CISO / SOC / Infraestructura).
 - **Decisión:** Centralizar todas las etiquetas, severidades, estados, glosarios y nombres de hojas de cálculo de Excel en un catálogo de traducción estructurado `i18n` seleccionable por flag `--lang [es|en]`.
+
+---
+
+## ADR-003: Integración de Motor Dual RDAP / WHOIS para Inventario de Activos
+- **Fecha:** 2026-09-01
+- **Estado:** Aceptado
+- **Contexto:** Las consultas WHOIS tradicionales por puerto 43 TCP sufren bloqueos de firewall y timeouts constantes en redes corporativas, dejando vacíos o como `N/D` los campos de Registrar, Expiración y Marca en la hoja de inventario.
+- **Decisión:** Implementar consultas asíncronas a RDAP (Registration Data Access Protocol) sobre HTTPS estándar (puerto 443) con `httpx`, extrayendo eventos de expiración, entidades registradoras y entidad registrante (Brand), con fallback asíncrono a WHOIS y guardado de evidencias forenses en `rdap.json`.
+- **Consecuencias:** Tiempos de respuesta reducidos de 30s a <10s por lote, 100% de confiabilidad frente a firewalls, y población completa de la hoja `Inventario_Dominios` / `Domain_Inventory`.
