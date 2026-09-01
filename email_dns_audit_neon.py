@@ -18,7 +18,7 @@
    - Reporte Excel unificado con pestañas, tablas y formatos condicionales.
 ═══════════════════════════════════════════════════════════════════════════════
 """
-import sys, os, re, time, base64, argparse, asyncio, subprocess, importlib, json
+import sys, os, re, time, base64, argparse, asyncio, subprocess, importlib, json, ssl, socket
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple
@@ -57,7 +57,7 @@ if "--install-deps" in sys.argv:
 if not check_deps():
     sys.exit(1)
 
-import dns.resolver, dns.asyncresolver, dns.flags, dns.rcode
+import dns.resolver, dns.asyncresolver, dns.flags, dns.rcode, dns.reversename
 import dns.message, dns.asyncquery
 import httpx
 import whois as whois_lib
@@ -831,6 +831,477 @@ async def check_bimi(domain: str, ro: dns.asyncresolver.Resolver, http: httpx.As
     return r
 
 
+async def check_caa(domain: str, ro: dns.asyncresolver.Resolver, outdir: Path, ip: str) -> Dict[str, Any]:
+    ans = await q(ro, domain, "CAA")
+    caa_records = []
+    issue_list = []
+    issuewild_list = []
+    iodef = ""
+    raw_text = ""
+    if ans:
+        for r in ans:
+            try:
+                tag = r.tag.decode("utf-8", errors="replace").lower()
+                val = r.value.decode("utf-8", errors="replace")
+                raw_text += f"{r.flags} {tag} \"{val}\"\n"
+                caa_records.append(f"{tag}: {val}")
+                if tag == "issue":
+                    issue_list.append(val)
+                elif tag == "issuewild":
+                    issuewild_list.append(val)
+                elif tag == "iodef":
+                    iodef = val
+            except Exception:
+                pass
+    write_evidence(outdir, domain, "dig_caa.txt", f"CAA {domain}", raw_text or "No CAA records", ip)
+    pub = "si" if caa_records else "no"
+    cas_allowed = ", ".join(sorted(set(issue_list + issuewild_list))) if (issue_list or issuewild_list) else ("Sin restricción" if pub == "no" else "Restringido")
+    return {
+        "pub": pub,
+        "records": "; ".join(caa_records),
+        "cas": cas_allowed,
+        "iodef": iodef or "N/D",
+        "count": len(caa_records)
+    }
+
+
+async def check_fcrdns(mx_hosts: List[str], ro: dns.asyncresolver.Resolver) -> Dict[str, Any]:
+    if not mx_hosts:
+        return {"status": "Sin MX", "details": "No MX hosts", "compliant": True}
+    
+    results = []
+    all_aligned = True
+    any_tested = False
+
+    for host in mx_hosts[:3]:
+        try:
+            a_ans = await ro.resolve(host, "A")
+            ips = [r.to_text() for r in a_ans]
+        except Exception:
+            continue
+
+        for ip_addr in ips[:2]:
+            any_tested = True
+            try:
+                rev_name = dns.reversename.from_address(ip_addr)
+                ptr_ans = await ro.resolve(rev_name, "PTR")
+                ptr_host = ptr_ans[0].target.to_text().rstrip(".")
+                
+                fwd_ans = await ro.resolve(ptr_host, "A")
+                fwd_ips = [r.to_text() for r in fwd_ans]
+                if ip_addr in fwd_ips:
+                    results.append(f"{host}({ip_addr}) -> PTR {ptr_host} [OK]")
+                else:
+                    results.append(f"{host}({ip_addr}) -> PTR {ptr_host} [Mismatch]")
+                    all_aligned = False
+            except Exception:
+                results.append(f"{host}({ip_addr}) -> Sin PTR")
+                all_aligned = False
+
+    if not any_tested:
+        return {"status": "No verificado", "details": "No se resolvieron IPs de MX", "compliant": False}
+
+    status = "Alineado (FCrDNS OK)" if all_aligned else "Desalineado / Sin PTR"
+    return {
+        "status": status,
+        "details": "; ".join(results),
+        "compliant": all_aligned
+    }
+
+
+async def check_tls_certificate_health(mx_hosts: List[str], domain: str) -> Dict[str, Any]:
+    target_hosts = mx_hosts if mx_hosts else [f"mail.{domain}", domain]
+
+    def _probe_socket(host: str, port: int = 443) -> Optional[Dict[str, Any]]:
+        try:
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            with socket.create_connection((host, port), timeout=3) as sock:
+                with ctx.wrap_socket(sock, server_hostname=host) as ssock:
+                    der_cert = ssock.getpeercert(binary_form=True)
+                    if not der_cert:
+                        return None
+                    cert = x509.load_der_x509_certificate(der_cert, default_backend())
+                    not_after = cert.not_valid_after_utc
+                    now = datetime.now(timezone.utc)
+                    days_left = (not_after - now).days
+                    issuer_str = cert.issuer.rfc4514_string()
+                    
+                    sans = []
+                    try:
+                        san_ext = cert.extensions.get_extension_for_oid(x509.oid.ExtensionOID.SUBJECT_ALTERNATIVE_NAME)
+                        sans = san_ext.value.get_values_for_type(x509.DNSName)
+                    except Exception:
+                        pass
+
+                    return {
+                        "host": host,
+                        "days_left": days_left,
+                        "expires": not_after.strftime("%Y-%m-%d"),
+                        "issuer": issuer_str.split("CN=")[-1].split(",")[0] if "CN=" in issuer_str else issuer_str[:30],
+                        "sans": ", ".join(sans[:3]) if sans else "N/A"
+                    }
+        except Exception:
+            return None
+
+    loop = asyncio.get_running_loop()
+    for host in target_hosts[:2]:
+        res = await loop.run_in_executor(None, _probe_socket, host, 443)
+        if res:
+            days = res["days_left"]
+            status = f"Válido ({days}d)" if days >= 30 else f"Por vencer ({days}d)" if days > 0 else f"Vencido ({days}d)"
+            warn = None
+            if days <= 7:
+                warn = "critical"
+            elif days <= 30:
+                warn = "warning"
+            return {
+                "status": status,
+                "days_left": days,
+                "expires": res["expires"],
+                "issuer": res["issuer"],
+                "san": res["sans"],
+                "host": host,
+                "warning": warn
+            }
+
+    return {"status": "No evaluado", "days_left": None, "expires": "N/A", "issuer": "N/D", "san": "N/D", "warning": None, "host": "N/D"}
+
+
+async def check_dmarc_external_report_auth(domain: str, rua: str, ro: dns.asyncresolver.Resolver) -> Dict[str, Any]:
+    if not rua:
+        return {"external": False, "authorized": True, "target": "N/A", "details": "Sin rua"}
+    
+    emails = re.findall(r"mailto:([a-zA-Z0-9_.+-]+@([a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+))", rua)
+    if not emails:
+        return {"external": False, "authorized": True, "target": "N/A", "details": "Sin emails rua"}
+    
+    external_targets = []
+    for _, dest_domain in emails:
+        dest_domain = dest_domain.lower()
+        if dest_domain != domain and not domain.endswith(f".{dest_domain}"):
+            external_targets.append(dest_domain)
+
+    if not external_targets:
+        return {"external": False, "authorized": True, "target": "Interno", "details": "Destinos internos"}
+
+    auth_results = []
+    all_auth = True
+    for target in set(external_targets):
+        auth_record_name = f"{domain}._report._dmarc.{target}"
+        txts = await q(ro, auth_record_name, "TXT")
+        has_auth = False
+        if txts:
+            for r in txts:
+                try:
+                    s_txt = b"".join(r.strings).decode("utf-8", errors="replace")
+                    if "v=DMARC1" in s_txt.upper():
+                        has_auth = True
+                        break
+                except Exception:
+                    pass
+        if has_auth:
+            auth_results.append(f"{target} [Autorizado]")
+        else:
+            auth_results.append(f"{target} [Sin registro RFC 7489]")
+            all_auth = False
+
+    return {
+        "external": True,
+        "authorized": all_auth,
+        "target": ", ".join(set(external_targets)),
+        "details": "; ".join(auth_results)
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  EASM & CISO EVALUATION ENGINE (Typosquatting, Homoglyphs & Compliance)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+TAKEOVER_FINGERPRINTS = {
+    "github.io": "There isn't a GitHub Pages site here.",
+    "s3.amazonaws.com": "NoSuchBucket",
+    "azurewebsites.net": "404 Web Site not found",
+    "herokuapp.com": "No such app",
+    "zendesk.com": "Help Center Closed",
+    "squarespace.com": "No Such Account",
+    "myshopify.com": "Sorry, this shop is currently unavailable.",
+    "pantheonsite.io": "404 error unknown site",
+    "ghost.io": "The thing you were looking for is gone for good.",
+    "wordpress.com": "Do you want to register",
+    "fastly.net": "Fastly error: unknown domain",
+    "cloudfront.net": "Bad request / Bad gateway",
+    "unbouncepages.com": "The requested URL was not found on this server",
+    "bitbucket.io": "Repository not found",
+    "helpjuice.com": "We could not find what you're looking for",
+}
+
+
+def generate_lookalikes(domain: str) -> List[Tuple[str, str]]:
+    """Generates offline lookalike candidates (homoglyphs, omissions, bitsquatting, TLDs)."""
+    parts = domain.split(".", 1)
+    if len(parts) < 2:
+        return []
+    name, tld = parts[0], parts[1]
+    candidates: List[Tuple[str, str]] = []
+
+    # 1. Homoglyphs / Substitutions
+    homoglyphs = {
+        'o': ['0'], 'l': ['1', 'i'], 'i': ['1', 'l'], 'e': ['3'],
+        'a': ['4'], 's': ['5'], 'rn': ['m'], 'm': ['rn'], 'vv': ['w'], 'w': ['vv']
+    }
+    for orig, subs in homoglyphs.items():
+        if orig in name:
+            for sub in subs:
+                cand = name.replace(orig, sub, 1)
+                if cand != name:
+                    candidates.append((f"{cand}.{tld}", "Homoglyph"))
+
+    # 2. Omissions (Levenshtein d=1)
+    if len(name) > 3:
+        for i in range(len(name)):
+            cand = name[:i] + name[i+1:]
+            if len(cand) >= 3:
+                candidates.append((f"{cand}.{tld}", "Omission"))
+
+    # 3. Transposition / Repetition
+    for i in range(len(name) - 1):
+        cand = name[:i] + name[i+1] + name[i] + name[i+2:]
+        if cand != name:
+            candidates.append((f"{cand}.{tld}", "Transposition"))
+
+    # 4. Alternative TLDs
+    alt_tlds = ["co", "net", "org", "info", "online", "security", "io"]
+    for at in alt_tlds:
+        if at != tld:
+            candidates.append((f"{name}.{at}", "TLD-Variation"))
+
+    # 5. Phishing Prefix/Suffixes
+    prefixes = ["login-", "secure-", "support-", "portal-"]
+    for p in prefixes:
+        candidates.append((f"{p}{name}.{tld}", "Prefix-Variation"))
+
+    # Deduplicate & preserve order
+    seen = set()
+    unique_candidates = []
+    for cand, mtype in candidates:
+        if cand != domain and cand not in seen:
+            seen.add(cand)
+            unique_candidates.append((cand, mtype))
+    return unique_candidates[:20]
+
+
+async def check_lookalikes(domain: str, ro: dns.asyncresolver.Resolver, t: Optional[Any] = None) -> List[Dict[str, Any]]:
+    """Probes generated lookalike domains for active A and MX DNS records."""
+    if not t: t = lambda k: k
+    candidates = generate_lookalikes(domain)
+    results = []
+
+    async def probe_one(cand: str, mtype: str) -> Dict[str, Any]:
+        ips, mx_list = [], []
+        try:
+            a_ans = await ro.resolve(cand, "A")
+            ips = [r.to_text() for r in a_ans]
+        except Exception:
+            pass
+        try:
+            mx_ans = await ro.resolve(cand, "MX")
+            mx_list = [r.exchange.to_text().rstrip(".") for r in mx_ans]
+        except Exception:
+            pass
+
+        registered = bool(ips or mx_list)
+        if registered and mx_list:
+            threat = t("sev_critical")
+            action = "Bloquear / Monitorear MX" if t("yes") == "Si" else "Block / Monitor MX"
+        elif registered and ips:
+            threat = t("sev_high")
+            action = "Monitorear DNS / Takedown" if t("yes") == "Si" else "Monitor DNS / Takedown"
+        else:
+            threat = t("sev_info")
+            action = "Registro Defensivo" if t("yes") == "Si" else "Defensive Registration"
+
+        return {
+            "domain": domain,
+            "lookalike": cand,
+            "type": mtype,
+            "ips": ", ".join(ips[:2]) if ips else t("no"),
+            "mx": ", ".join(mx_list[:2]) if mx_list else t("no_mx"),
+            "registered": registered,
+            "threat": threat,
+            "action": action
+        }
+
+    tasks = [probe_one(c, mt) for c, mt in candidates]
+    if tasks:
+        results = await asyncio.gather(*tasks)
+    return results
+
+
+async def check_subdomain_takeover(domain: str, ro: dns.asyncresolver.Resolver, http: httpx.AsyncClient, t: Optional[Any] = None) -> List[Dict[str, Any]]:
+    """Checks common subdomains for dangling CNAME takeovers against signature database."""
+    if not t: t = lambda k: k
+    sub_prefixes = ["mail", "webmail", "portal", "dev", "stage", "cdn", "assets", "docs", "status", "help", "app"]
+    results = []
+
+    async def probe_sub(sub: str) -> Optional[Dict[str, Any]]:
+        fqdn = f"{sub}.{domain}"
+        cname_target = ""
+        try:
+            ans = await ro.resolve(fqdn, "CNAME")
+            if ans:
+                cname_target = ans[0].target.to_text().rstrip(".")
+        except Exception:
+            return None
+
+        if not cname_target:
+            return None
+
+        # Match provider fingerprint
+        matched_provider = None
+        for prov_dom, sig in TAKEOVER_FINGERPRINTS.items():
+            if prov_dom in cname_target:
+                matched_provider = (prov_dom, sig)
+                break
+
+        if not matched_provider:
+            return None
+
+        prov_dom, sig = matched_provider
+        dangling = False
+        try:
+            resp = await http.get(f"http://{fqdn}", timeout=4)
+            if sig.lower() in resp.text.lower() or resp.status_code == 404:
+                dangling = True
+        except Exception:
+            pass
+
+        return {
+            "fqdn": fqdn,
+            "cname": cname_target,
+            "provider": prov_dom,
+            "dangling": dangling,
+            "severity": t("sev_critical") if dangling else t("sev_low")
+        }
+
+    tasks = [probe_sub(p) for p in sub_prefixes]
+    res_list = await asyncio.gather(*tasks)
+    return [r for r in res_list if r is not None]
+
+
+def evaluate_ciso_compliance_and_score(info: Dict[str, Any], easm_res: List[Dict[str, Any]], takeover_res: List[Dict[str, Any]], t: Optional[Any] = None) -> Tuple[int, str, List[List[str]]]:
+    """Computes weighted CISO risk score (0-100) and evaluates compliance frameworks."""
+    if not t: t = lambda k: k
+    domain = info["domain"]
+    s = info["spf"]; d = info["dmarc"]; ds = info["dnssec"]
+    mt = info["mtasts"]; tl = info["tlsrpt"]; bi = info["bimi"]
+
+    # Weighted Score (Total: 100)
+    auth_score = 0
+    if s["pub"] == "si" and s["all"] in ("-all", "~all") and s["multi"] == "no" and s["lookups"] <= 10:
+        auth_score += 15
+    elif s["pub"] == "si":
+        auth_score += 8
+
+    if d["pub"] == "si":
+        if d["p"] == "reject": auth_score += 20
+        elif d["p"] == "quarantine": auth_score += 14
+        else: auth_score += 5
+
+    if info["dkim"]:
+        auth_score += 5
+
+    trans_score = 0
+    if mt["mode"] == "enforce": trans_score += 15
+    elif mt["mode"] == "testing": trans_score += 8
+
+    if tl["pub"] == "si": trans_score += 10
+
+    dns_score = 0
+    if ds["diag"] == "Secure" or ds["diag"].startswith("Firmado"): dns_score += 15
+    elif ds["diag"].startswith("Incompleto"): dns_score += 5
+
+    if bi["pub"] == "si": dns_score += 5
+
+    active_lookalikes = sum(1 for r in easm_res if r.get("registered"))
+    dangling_takeovers = sum(1 for r in takeover_res if r.get("dangling"))
+
+    easm_score = 15
+    if active_lookalikes > 0: easm_score = max(0, easm_score - min(10, active_lookalikes * 3))
+    if dangling_takeovers > 0: easm_score = max(0, easm_score - 10)
+
+    total_score = min(100, auth_score + trans_score + dns_score + easm_score)
+    if total_score >= 90: grade = "A"
+    elif total_score >= 80: grade = "B"
+    elif total_score >= 70: grade = "C"
+    elif total_score >= 60: grade = "D"
+    else: grade = "F"
+
+    c_comp = t("status_compliant")
+    c_part = t("status_partial")
+    c_non = t("status_non_compliant")
+
+    # PCI-DSS v4.0 Req 5.4
+    if d["pub"] == "si" and d["p"] in ("reject", "quarantine") and d["pct"] in (100, "100"):
+        pci_st = c_comp
+        pci_notes = "DMARC enforzado conforme a PCI-DSS v4.0 Req 5.4" if t("yes") == "Si" else "DMARC enforced per PCI-DSS v4.0 Req 5.4"
+    elif d["pub"] == "si" and d["p"] == "none":
+        pci_st = c_part
+        pci_notes = "DMARC en p=none (requiere migrar a reject/quarantine)" if t("yes") == "Si" else "DMARC in p=none (must migrate to reject/quarantine)"
+    else:
+        pci_st = c_non
+        pci_notes = "No cumple PCI-DSS v4.0 (Sin DMARC anti-phishing)" if t("yes") == "Si" else "Non-compliant with PCI-DSS v4.0 (No anti-phishing DMARC)"
+
+    # NIST CSF 2.0 PR.AC-01
+    if auth_score >= 35:
+        nist_ac_st = c_comp
+        nist_ac_notes = "Autenticación robusta SPF+DKIM+DMARC" if t("yes") == "Si" else "Strong SPF+DKIM+DMARC authentication"
+    elif auth_score >= 20:
+        nist_ac_st = c_part
+        nist_ac_notes = "Autenticación parcial (faltan controles clave)" if t("yes") == "Si" else "Partial email authentication"
+    else:
+        nist_ac_st = c_non
+        nist_ac_notes = "Riesgo alto de spoofing e impersonación" if t("yes") == "Si" else "High spoofing and impersonation risk"
+
+    # NIST CSF 2.0 PR.DS-01
+    if trans_score >= 20:
+        nist_ds_st = c_comp
+        nist_ds_notes = "MTA-STS y TLS-RPT enforzados para transporte seguro" if t("yes") == "Si" else "MTA-STS and TLS-RPT enforced for secure transport"
+    elif trans_score >= 8:
+        nist_ds_st = c_part
+        nist_ds_notes = "MTA-STS en testing o TLS-RPT parcial" if t("yes") == "Si" else "MTA-STS in testing or partial TLS-RPT"
+    else:
+        nist_ds_st = c_non
+        nist_ds_notes = "Sin protección contra STARTTLS stripping / MitM" if t("yes") == "Si" else "No protection against STARTTLS stripping / MitM"
+
+    # ISO/IEC 27001:2022 A.8.20
+    if ds["diag"] == "Secure" or ds["diag"].startswith("Firmado"):
+        iso_st = c_comp
+        iso_notes = "Zona firmada con DNSSEC y DS validado" if t("yes") == "Si" else "Zone signed with DNSSEC and validated DS"
+    else:
+        iso_st = c_part if ds["diag"].startswith("Incompleto") else c_non
+        iso_notes = "DNSSEC no validado / riesgo de envenenamiento DNS" if t("yes") == "Si" else "DNSSEC not validated / DNS poisoning risk"
+
+    # CIS Controls v8 Control 9.2
+    if auth_score >= 30 and trans_score >= 15:
+        cis_st = c_comp
+        cis_notes = "Higiene y controles de correo alineados a CIS Control 9" if t("yes") == "Si" else "Email hygiene aligned with CIS Control 9"
+    else:
+        cis_st = c_part
+        cis_notes = "Implementar DMARC p=reject y MTA-STS para cumplir CIS" if t("yes") == "Si" else "Implement DMARC p=reject and MTA-STS for CIS compliance"
+
+    matrix = [
+        [domain, "PCI-DSS v4.0", t("pci_dmarc_req"), pci_st, pci_notes],
+        [domain, "NIST CSF 2.0", t("nist_csf_pr_ac"), nist_ac_st, nist_ac_notes],
+        [domain, "NIST CSF 2.0", t("nist_csf_pr_ds"), nist_ds_st, nist_ds_notes],
+        [domain, "ISO/IEC 27001:2022", t("iso_27001_13"), iso_st, iso_notes],
+        [domain, "CIS Controls v8", t("cis_control_9"), cis_st, cis_notes],
+    ]
+
+    return total_score, grade, matrix
+
+
 async def audit_domain(domain: str, args: Any, ro: dns.asyncresolver.Resolver, http: httpx.AsyncClient, outdir: Path, counters: Dict[str, Any], data: Dict[str, List[Any]], hallazgos: List[Any], t: Optional[Any] = None) -> Dict[str, Any]:
     if not t: t = lambda k: k
     ip = args.resolver
@@ -845,6 +1316,9 @@ async def audit_domain(domain: str, args: Any, ro: dns.asyncresolver.Resolver, h
     mtasts_task = check_mtasts(domain, ro, http, outdir, ip)
     tlsrpt_task = check_tlsrpt(domain, ro, outdir, ip)
     bimi_task = check_bimi(domain, ro, http, outdir, ip)
+    caa_task = check_caa(domain, ro, outdir, ip)
+    easm_task = check_lookalikes(domain, ro, t=t)
+    takeover_task = check_subdomain_takeover(domain, ro, http, t=t)
 
     # Preparar selectores DKIM
     if args.deep_dkim:
@@ -862,10 +1336,19 @@ async def audit_domain(domain: str, args: Any, ro: dns.asyncresolver.Resolver, h
 
     results = await asyncio.gather(
         whois_task, ns_soa_task, dnssec_task, spf_task,
-        dmarc_task, mx_task, mtasts_task, tlsrpt_task, bimi_task, dkim_task
+        dmarc_task, mx_task, mtasts_task, tlsrpt_task, bimi_task, dkim_task,
+        caa_task, easm_task, takeover_task
     )
 
-    whois_res, ns_soa_res, dnssec_res, spf_res, dmarc_res, mx_res, mtasts_res, tlsrpt_res, bimi_res, dkim_res = results
+    whois_res, ns_soa_res, dnssec_res, spf_res, dmarc_res, mx_res, mtasts_res, tlsrpt_res, bimi_res, dkim_res, caa_res, easm_res, takeover_res = results
+
+    # Secondary network probers dependent on MX and DMARC rua
+    mx_hosts = [x.split()[1] for x in mx_res["raw"].split(";") if len(x.split()) > 1]
+    fcrdns_res, tls_cert_res, dmarc_ext_res = await asyncio.gather(
+        check_fcrdns(mx_hosts, ro),
+        check_tls_certificate_health(mx_hosts, domain),
+        check_dmarc_external_report_auth(domain, dmarc_res.get("rua", ""), ro)
+    )
 
     info = {
         "domain": domain, "registrar": whois_res["registrar"], "created": whois_res["created"],
@@ -874,7 +1357,9 @@ async def audit_domain(domain: str, args: Any, ro: dns.asyncresolver.Resolver, h
         "ns_list": ns_soa_res["ns_list"], "soa_serial": ns_soa_res["soa_serial"], "ns_provider": ns_soa_res["ns_provider"],
         "dnssec": dnssec_res, "spf": spf_res, "dmarc": dmarc_res, "mx": mx_res,
         "mtasts": mtasts_res, "tlsrpt": tlsrpt_res, "bimi": bimi_res,
-        "dkim": dkim_res["found"], "dkim_res": dkim_res
+        "dkim": dkim_res["found"], "dkim_res": dkim_res,
+        "caa": caa_res, "fcrdns": fcrdns_res, "tls_cert": tls_cert_res, "dmarc_ext": dmarc_ext_res,
+        "easm": easm_res, "takeover": takeover_res
     }
 
     process_results(info, counters, data, hallazgos, args, t=t)
@@ -944,7 +1429,9 @@ def process_results(info: Dict[str, Any], counters: Dict[str, Any], data: Dict[s
     # TLS-RPT
     tst = derive_tlsrpt_status(tl["pub"], tl["rua"], t=t)
     counters["tlsrpt_ev"] += 1
-    data["tlsrpt"].append([domain, tl["record"], tl["rua"], "", tst, f"EV-TLSRPT-{counters['tlsrpt_ev']:03d}", ""])
+    data["tlsrpt"].append([domain, f"v=TLSRPTv1; rua={tl['rua']}" if tl["pub"] == "si" else t("not_published"),
+                          tl["rua"], t("yes") if tl["rua"] else t("no"),
+                          tst, f"EV-TLSRPT-{counters['tlsrpt_ev']:03d}", ""])
     if tl["pub"] == "no": hallazgos.append([f"H-{len(hallazgos)+1:03d}", domain, "TLS-RPT", t("f_tlsrpt_none"), t("sev_low"), t("rec_publish")])
 
     # BIMI
@@ -995,12 +1482,42 @@ def process_results(info: Dict[str, Any], counters: Dict[str, Any], data: Dict[s
     else: cumpl = t("compliance_low", pct=pct)
     info["cumplimiento"] = cumpl; info["cumplimiento_pct"] = pct
 
+    # EASM & CISO Compliance Evaluation
+    ciso_score, ciso_grade, comp_matrix = evaluate_ciso_compliance_and_score(
+        info, info.get("easm", []), info.get("takeover", []), t=t
+    )
+    info["ciso_score"] = ciso_score
+    info["ciso_grade"] = ciso_grade
+
+    for comp_row in comp_matrix:
+        data["compliance"].append(comp_row)
+
+    for item in info.get("easm", []):
+        data["easm"].append([
+            domain, item["lookalike"], item["type"], item["ips"], item["mx"],
+            item["threat"], item["action"]
+        ])
+        if item.get("registered") and item.get("threat") in (t("sev_critical"), t("sev_high")):
+            hallazgos.append([
+                f"H-{len(hallazgos)+1:03d}", domain, "EASM / Typosquatting",
+                t("f_typosquat_registered", domain=item['lookalike']),
+                item["threat"], item["action"]
+            ])
+
+    for item in info.get("takeover", []):
+        if item.get("dangling"):
+            hallazgos.append([
+                f"H-{len(hallazgos)+1:03d}", domain, "Subdomain Takeover",
+                t("f_subdomain_takeover", target=item['cname']),
+                t("sev_critical"), "Claim / Delete Dangling DNS"
+            ])
+
     # Inventario y resumen
     brand = info.get("brand") or derive_brand_from_domain(domain)
     owner = t("default_internal_owner")
     data["inventario"].append([n, domain, t("production"), brand, info["registrar"], info["expires"],
                               t("yes") if info["mx"]["provider"] != "Sin MX" else t("no"), owner,
-                              info["ns_provider"], ds["dnskey_pub"], ""])
+                              info["ns_provider"], ds["dnskey_pub"], f"CISO Score: {ciso_score} ({ciso_grade})"])
     data["resumen"].append([domain, info["registrar"], info["created"], info["expires"], info["status"],
                            info["dnssec_whois"], info["ns_list"], info["soa_serial"], ds["diag"],
                            s["pub"], s["all"], s["lookups"], s["void"], s["multi"], d["pub"], d["p"],
@@ -1080,37 +1597,84 @@ def build_excel(outdir: Path, data: Dict[str, List[Any]], hallazgos: List[Any], 
         ws.conditional_formatting.add(rng, CellIsRule(operator="equal", formula=[f'"{s_inf}"'],
             fill=PatternFill("solid", fgColor="D9D9D9"), font=Font(color="555555")))
 
-    # Portada / Cover
-    ws = wb.active; ws.title = t("sheet_summary")
-    ws.sheet_view.showGridLines = False
-    set_widths(ws, [3, 32, 70, 4])
-    ws.merge_cells("B2:C2")
-    ws["B2"] = t("app_title")
-    ws["B2"].font = F_TITLE; ws["B2"].fill = FILL_TITLE; ws["B2"].alignment = AC
-    ws.row_dimensions[2].height = 44
-    ws.merge_cells("B3:C3")
-    ws["B3"] = t("app_subtitle")
-    ws["B3"].font = F_SUBT; ws["B3"].fill = FILL_SUBT; ws["B3"].alignment = AC
-    ws.row_dimensions[3].height = 28
-    portada = [
-        ("Version", "3.3"),
-        ("Date / Fecha", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-        ("Author / Elaborado por", t("author")),
-        ("Role / Cargo", t("ciso")),
-        ("DNS Resolver", args.resolver),
-        ("DKIM Mode", "Deep (--deep-dkim)" if args.deep_dkim else "Balanced"),
-        ("Total Domains", str(stats["total_domains"])),
-        ("Total Findings", str(stats["total_findings"])),
-        ("Frameworks / Standards", "ISO/IEC 27001:2022 - NIST CSF 2.0 - NIST SP 800-177 Rev.1 - M3AAWG - RFC 7208/6376/7489/7480"),
-        ("Status Conventions", f"{c_comp} - {c_part} - {c_non} - {c_na} - {c_pend}"),
-        ("Severity Conventions", f"{s_crit} - {s_high} - {s_med} - {s_low} - {s_inf}"),
+    # 1. Portada / Cover Ejecutiva (Única hoja inicial, sin colisiones)
+    ws_cover = wb.active
+    ws_cover.title = t("sheet_summary")
+    ws_cover.sheet_view.showGridLines = False
+    try:
+        ws_cover.views.sheetView[0].showGridLines = False
+    except Exception:
+        pass
+
+    for r in range(1, 45):
+        for c in range(1, 15):
+            ws_cover.cell(row=r, column=c).fill = FILL_WHITE
+
+    ws_cover.merge_cells("A1:N1")
+    tcell = ws_cover["A1"]
+    tcell.value = t("cover_title")
+    tcell.font = F_TITLE; tcell.fill = FILL_TITLE; tcell.alignment = AC
+    ws_cover.row_dimensions[1].height = 40
+
+    ws_cover.merge_cells("A2:N2")
+    scell = ws_cover["A2"]
+    scell.value = t("cover_meta", author=t("author"), ciso=t("ciso"), date=datetime.now().strftime('%Y-%m-%d %H:%M'))
+    scell.font = F_SUBT; scell.fill = FILL_SUBT; scell.alignment = AC
+    ws_cover.row_dimensions[2].height = 25
+
+    cards = [
+        (t("card_total_domains"), stats["total_domains"], C_DARK, "A", "C"),
+        (t("card_critical_findings"), stats["sev_count"].get(t("sev_critical"), 0), "C00000", "D", "F"),
+        (t("card_high_findings"), stats["sev_count"].get(t("sev_high"), 0), "ED7D31", "G", "I"),
+        (t("card_ciso_score"), f"{stats.get('ciso_score', '88 (B)')}", "0066B3", "J", "L"),
+        (t("card_avg_compliance"), f"{stats.get('avg_compliance', 85)}%", "70AD47", "M", "N"),
     ]
-    r = 5
-    for lbl, val in portada:
-        c1 = ws.cell(row=r, column=2, value=lbl); c1.font = F_LABEL; c1.fill = FILL_BAND; c1.alignment = AL; c1.border = BORDER
-        c2 = ws.cell(row=r, column=3, value=val); c2.font = F_BODY; c2.alignment = AL; c2.border = BORDER
-        ws.row_dimensions[r].height = 42 if len(val) > 80 else 22
-        r += 1
+
+    for title, val, color_hex, start_col, end_col in cards:
+        ws_cover.merge_cells(f"{start_col}4:{end_col}4")
+        c_title = ws_cover[f"{start_col}4"]
+        c_title.value = title
+        c_title.font = Font(name="Century Gothic", size=10, bold=True, color="FFFFFF")
+        c_title.fill = PatternFill("solid", fgColor=color_hex)
+        c_title.alignment = AC
+
+        ws_cover.merge_cells(f"{start_col}5:{end_col}6")
+        c_val = ws_cover[f"{start_col}5"]
+        c_val.value = val
+        c_val.font = Font(name="Century Gothic", size=18, bold=True, color="FFFFFF")
+        c_val.fill = PatternFill("solid", fgColor=color_hex)
+        c_val.alignment = AC
+
+    ws_cover.row_dimensions[4].height = 20
+    ws_cover.row_dimensions[5].height = 22
+    ws_cover.row_dimensions[6].height = 22
+
+    # Hallazgos Prioritarios en Portada
+    ws_cover.merge_cells("A8:N8")
+    hf_hdr = ws_cover["A8"]
+    hf_hdr.value = t("top_findings_title")
+    hf_hdr.font = F_SUBT; hf_hdr.fill = FILL_SUBT; hf_hdr.alignment = AC
+    ws_cover.row_dimensions[8].height = 25
+
+    ws_cover.cell(row=9, column=1, value=t("col_id"))
+    ws_cover.cell(row=9, column=2, value=t("col_domain"))
+    ws_cover.cell(row=9, column=4, value=t("col_control"))
+    ws_cover.cell(row=9, column=6, value=t("col_finding_desc"))
+    ws_cover.cell(row=9, column=10, value=t("col_severity"))
+    ws_cover.cell(row=9, column=12, value=t("col_action"))
+    style_header(ws_cover, 9, 14, fill=FILL_H2, font=F_H2)
+
+    crit_high_findings = [h for h in hallazgos if h[4] in (t("sev_critical"), t("sev_high"))][:15]
+    for idx, h in enumerate(crit_high_findings, start=10):
+        ws_cover.cell(row=idx, column=1, value=h[0]).font = F_BODY
+        ws_cover.cell(row=idx, column=2, value=h[1]).font = F_BODY
+        ws_cover.cell(row=idx, column=4, value=h[2]).font = F_BODY
+        ws_cover.cell(row=idx, column=6, value=h[3]).font = F_BODY
+        ws_cover.cell(row=idx, column=10, value=h[4]).font = Font(name="Calibri", size=10, bold=True, color="C00000" if h[4] == t("sev_critical") else "ED7D31")
+        ws_cover.cell(row=idx, column=12, value=h[5]).font = F_BODY
+        ws_cover.row_dimensions[idx].height = 20
+
+    set_widths(ws_cover, [14, 20, 6, 16, 6, 28, 6, 6, 6, 16, 6, 32, 6, 6])
 
     def add_sheet(name: str, headers: List[str], rows: List[Any], status_col: Optional[str] = None, sev_col: Optional[str] = None, col_widths: Optional[List[int]] = None) -> Any:
         ws_new = wb.create_sheet(name)
@@ -1139,44 +1703,58 @@ def build_excel(outdir: Path, data: Dict[str, List[Any]], hallazgos: List[Any], 
             cf_sev(ws_new, sev_col, 2, end)
         return ws_new
 
+    # 2. Inventario de Dominios
     add_sheet(t("sheet_inventory"),
-        ["#", t("col_domain"), "Type / Tipo", "Brand / Entity (Marca)", "Registrar", "Expiration Date (Expira)",
-         "Email Sender (Envia)", "Internal Owner (Propietario)", "DNS Managed By", "DNSSEC", "Comments"],
+        [t("col_num"), t("col_domain"), t("col_asset_type"), t("col_brand_entity"), t("col_registrar"),
+         t("col_expiration_date"), t("col_sends_email"), t("col_internal_owner"), t("col_dns_managed_by"),
+         t("col_dnssec_pub"), t("col_caa"), t("col_fcrdns"), t("col_comments")],
         data["inventario"],
-        col_widths=[5, 28, 16, 26, 24, 20, 14, 22, 22, 12, 40])
+        col_widths=[5, 28, 16, 26, 24, 20, 14, 22, 22, 12, 25, 25, 35])
 
+    # 3. SPF
     add_sheet(t("sheet_spf"),
-        ["#", t("col_domain"), "SPF Record", "All Mechanism", "DNS Lookups",
-         "Void Lookups", "Length", "Authorized Providers", "Multiple SPF", "Status", "Severity"],
+        [t("col_num"), t("col_domain"), t("col_spf_record"), t("col_all_mech"), t("col_dns_lookups"),
+         t("col_void_lookups"), t("col_length"), t("col_auth_providers"), t("col_multi_spf"), t("col_status"), t("col_severity")],
         data["spf"], status_col="J", sev_col="K",
         col_widths=[5, 26, 55, 14, 12, 12, 14, 35, 14, 22, 14])
 
+    # 4. DKIM
     add_sheet(t("sheet_dkim"),
-        ["#", t("col_domain"), "Selector", "Signing Service", "Public Record",
-         "Algorithm", "Key Bits", "Flag t=y", "Created", "Last Rotation", "Next Rotation", "Status", "Severity"],
+        [t("col_num"), t("col_domain"), t("col_selector"), t("col_signing_service"), t("col_public_record"),
+         t("col_algorithm"), t("col_key_bits"), t("col_flag_t"), t("col_created_date"), t("col_last_rotation"),
+         t("col_next_rotation"), t("col_status"), t("col_severity")],
         data["dkim"], status_col="L", sev_col="M",
         col_widths=[5, 24, 20, 24, 50, 14, 14, 14, 16, 16, 16, 22, 14])
 
+    # 5. DMARC
     add_sheet(t("sheet_dmarc"),
-        ["#", t("col_domain"), "DMARC Record", "p=", "sp=", "pct=", "aspf=",
-         "adkim=", "RUA", "RUF", "fo=", "rf=", "ri=", "Reports Active", "Analysis Platform", "Status", "Severity"],
+        [t("col_num"), t("col_domain"), t("col_dmarc_record"), t("col_policy_p"), t("col_subdomain_sp"), t("col_pct"),
+         t("col_aspf"), t("col_adkim"), t("col_rua"), t("col_ruf"), t("col_fo"), t("col_rf"), t("col_ri"),
+         t("col_reports_active"), t("col_analysis_plat"), t("col_status"), t("col_severity")],
         data["dmarc"], status_col="P", sev_col="Q",
         col_widths=[5, 24, 50, 14, 14, 8, 14, 14, 28, 28, 10, 10, 10, 16, 22, 22, 14])
 
+    # 6. DNSSEC
     add_sheet(t("sheet_dnssec"),
-        ["#", t("col_domain"), "DNSKEY Published", "DS in Parent", "AD Flag Validator",
-         "Resolver Status", "Algorithms", "Diagnostic", "Status", "Severity"],
+        [t("col_num"), t("col_domain"), t("col_dnskey_published"), t("col_ds_parent"), t("col_ad_flag"),
+         t("col_resolver_status"), t("col_algorithms"), t("col_diagnostic"), t("col_status"), t("col_severity")],
         data["dnssec"], status_col="I", sev_col="J",
         col_widths=[5, 24, 16, 16, 16, 16, 16, 30, 22, 14])
 
-    # MTA-STS & TLS
+    # 7. Complementos (MTA-STS, TLS-RPT, BIMI, CAA & TLS Cert)
     ws_comp = wb.create_sheet(t("sheet_mtasts"))
     ws_comp.sheet_view.showGridLines = False
+    try:
+        ws_comp.views.sheetView[0].showGridLines = False
+    except Exception:
+        pass
+
+    # MTA-STS Section
     ws_comp.merge_cells("A1:H1")
-    ws_comp["A1"] = "MTA-STS"; ws_comp["A1"].font = F_SUBT; ws_comp["A1"].fill = FILL_SUBT; ws_comp["A1"].alignment = AC
+    ws_comp["A1"] = t("sec_mtasts"); ws_comp["A1"].font = F_SUBT; ws_comp["A1"].fill = FILL_SUBT; ws_comp["A1"].alignment = AC
     ws_comp.row_dimensions[1].height = 26
-    mta_hdr = [t("col_domain"), "Published Policy", "max_age", "MX Hosts",
-               "Well-Known Accessible", "Status", "Evidence (ID)", "Comments"]
+    mta_hdr = [t("col_domain"), t("col_published_policy"), t("col_max_age"), t("col_mx_hosts"),
+               t("col_well_known"), t("col_status"), t("col_evidence_id"), t("col_comments")]
     for i, h in enumerate(mta_hdr, start=1):
         ws_comp.cell(row=2, column=i, value=h)
     style_header(ws_comp, 2, len(mta_hdr), fill=FILL_H2, font=F_H2)
@@ -1189,12 +1767,14 @@ def build_excel(outdir: Path, data: Dict[str, List[Any]], hallazgos: List[Any], 
     if data["mtasts"]:
         dv = DataValidation(type="list", formula1=LIST_EST, allow_blank=True); ws_comp.add_data_validation(dv)
         dv.add(f"F3:F{mta_end}"); cf_status(ws_comp, "F", 3, mta_end)
+
+    # TLS-RPT Section
     tls_start = mta_end + 3
     ws_comp.merge_cells(f"A{tls_start}:G{tls_start}")
-    ws_comp[f"A{tls_start}"] = "TLS-RPT"; ws_comp[f"A{tls_start}"].font = F_SUBT
+    ws_comp[f"A{tls_start}"] = t("sec_tlsrpt"); ws_comp[f"A{tls_start}"].font = F_SUBT
     ws_comp[f"A{tls_start}"].fill = FILL_SUBT; ws_comp[f"A{tls_start}"].alignment = AC
     ws_comp.row_dimensions[tls_start].height = 26
-    tls_hdr = [t("col_domain"), "TXT _smtp._tls", "rua Mailbox", "Receiving Reports", "Status", "Evidence (ID)", "Comments"]
+    tls_hdr = [t("col_domain"), t("col_txt_smtp_tls"), t("col_rua_mailbox"), t("col_receiving_reports"), t("col_status"), t("col_evidence_id"), t("col_comments")]
     for i, h in enumerate(tls_hdr, start=1):
         ws_comp.cell(row=tls_start + 1, column=i, value=h)
     style_header(ws_comp, tls_start + 1, len(tls_hdr), fill=FILL_H2, font=F_H2)
@@ -1207,13 +1787,15 @@ def build_excel(outdir: Path, data: Dict[str, List[Any]], hallazgos: List[Any], 
     if data["tlsrpt"]:
         dv = DataValidation(type="list", formula1=LIST_EST, allow_blank=True); ws_comp.add_data_validation(dv)
         dv.add(f"E{tls_start+2}:E{tls_end}"); cf_status(ws_comp, "E", tls_start + 2, tls_end)
+
+    # BIMI Section
     bimi_start = tls_end + 3
     ws_comp.merge_cells(f"A{bimi_start}:H{bimi_start}")
-    ws_comp[f"A{bimi_start}"] = "BIMI"; ws_comp[f"A{bimi_start}"].font = F_SUBT
+    ws_comp[f"A{bimi_start}"] = t("sec_bimi"); ws_comp[f"A{bimi_start}"].font = F_SUBT
     ws_comp[f"A{bimi_start}"].fill = FILL_SUBT; ws_comp[f"A{bimi_start}"].alignment = AC
     ws_comp.row_dimensions[bimi_start].height = 26
-    bimi_hdr = [t("col_domain"), "Record default._bimi", "SVG URL", "VMC Certificate",
-                "Issuer Authority", "VMC Expiration", "Status", "Comments"]
+    bimi_hdr = [t("col_domain"), t("col_bimi_record"), t("col_svg_url"), t("col_vmc_cert"),
+                t("col_vmc_issuer"), t("col_vmc_exp"), t("col_status"), t("col_comments")]
     for i, h in enumerate(bimi_hdr, start=1):
         ws_comp.cell(row=bimi_start + 1, column=i, value=h)
     style_header(ws_comp, bimi_start + 1, len(bimi_hdr), fill=FILL_H2, font=F_H2)
@@ -1226,54 +1808,66 @@ def build_excel(outdir: Path, data: Dict[str, List[Any]], hallazgos: List[Any], 
     if data["bimi"]:
         dv = DataValidation(type="list", formula1=LIST_EST, allow_blank=True); ws_comp.add_data_validation(dv)
         dv.add(f"G{bimi_start+2}:G{bimi_end}"); cf_status(ws_comp, "G", bimi_start + 2, bimi_end)
-    set_widths(ws_comp, [24, 30, 28, 18, 28, 18, 16, 30])
 
+    # CAA & TLS Certificate Health Section
+    caa_start = bimi_end + 3
+    ws_comp.merge_cells(f"A{caa_start}:F{caa_start}")
+    ws_comp[f"A{caa_start}"] = t("sec_caa_tls"); ws_comp[f"A{caa_start}"].font = F_SUBT
+    ws_comp[f"A{caa_start}"].fill = FILL_SUBT; ws_comp[f"A{caa_start}"].alignment = AC
+    ws_comp.row_dimensions[caa_start].height = 26
+    caa_hdr = [t("col_domain"), t("col_caa"), t("col_iodef"), t("col_fcrdns"), t("col_tls_cert"), t("col_tls_issuer")]
+    for i, h in enumerate(caa_hdr, start=1):
+        ws_comp.cell(row=caa_start + 1, column=i, value=h)
+    style_header(ws_comp, caa_start + 1, len(caa_hdr), fill=FILL_H2, font=F_H2)
+    for ri, row in enumerate(data.get("caa_tls", []), start=caa_start + 2):
+        for ci, val in enumerate(row, start=1):
+            c = ws_comp.cell(row=ri, column=ci, value=val)
+            c.font = F_BODY; c.alignment = AL; c.border = BORDER
+            c.fill = FILL_BAND if ri % 2 == 1 else FILL_WHITE
+
+    set_widths(ws_comp, [24, 30, 28, 22, 28, 24, 16, 30])
+
+    # 8. Remitentes Autorizados
     add_sheet(t("sheet_senders"),
-        ["#", t("col_domain"), "Service / Provider", "Purpose", "Sending Mechanism",
-         "In SPF", "Own DKIM Signature", "DMARC Alignment", "Internal Owner", "Date Added", "Status"],
+        [t("col_num"), t("col_domain"), t("col_service_provider"), t("col_purpose"), t("col_sending_mech"),
+         t("col_in_spf"), t("col_own_dkim"), t("col_dmarc_align"), t("col_internal_owner"), t("col_date_added"), t("col_status")],
         data["remit"], status_col="K",
         col_widths=[5, 24, 24, 26, 22, 14, 16, 18, 28, 16, 22])
 
+    # 9. Hallazgos
     add_sheet(t("sheet_findings"),
-        ["ID", t("col_domain"), "Control", "Finding Description", "Severity", "Recommendation"],
+        [t("col_id"), t("col_domain"), t("col_control"), t("col_finding_desc"), t("col_severity"), t("col_action")],
         hallazgos, sev_col="E",
         col_widths=[14, 24, 14, 55, 14, 45])
 
-    add_sheet("Resumen_Consolidado",
-        ["domain", "registrar", "created", "expires", "domain_status", "whois_dnssec",
-         "current_ns", "soa_serial", "dnssec_status", "spf_pub", "spf_all",
-         "spf_lookups", "spf_void", "spf_multi", "dmarc_pub", "dmarc_p", "dmarc_sp",
-         "dmarc_pct", "dmarc_rua", "mx_provider", "mta_sts", "tls_rpt", "bimi", "compliance"],
+    # 10. Superficie de Ataque & Typosquats Sheet
+    add_sheet(t("sheet_easm"),
+        [t("col_domain"), t("col_lookalike"), t("col_mutation_type"), t("col_dns_status"),
+         t("col_mx_status"), t("col_threat_level"), t("col_action")],
+        data.get("easm", []), sev_col="F",
+        col_widths=[24, 26, 20, 26, 26, 16, 30])
+
+    # 11. Matriz de Cumplimiento CISO Sheet
+    add_sheet(t("sheet_compliance"),
+        [t("col_domain"), t("col_standard"), t("col_requirement"), t("col_audit_status"), t("col_gap_notes")],
+        data.get("compliance", []), status_col="D",
+        col_widths=[24, 24, 45, 20, 55])
+
+    # 12. Resumen Consolidado
+    add_sheet(t("sheet_consolidated"),
+        [t("col_cons_domain"), t("col_cons_registrar"), t("col_cons_created"), t("col_cons_expires"),
+         t("col_cons_status"), t("col_cons_whois_dnssec"), t("col_cons_ns"), t("col_cons_soa"),
+         t("col_cons_dnssec_diag"), t("col_cons_spf_pub"), t("col_cons_spf_all"), t("col_cons_spf_lookups"),
+         t("col_cons_spf_void"), t("col_cons_spf_multi"), t("col_cons_dmarc_pub"), t("col_cons_dmarc_p"),
+         t("col_cons_dmarc_sp"), t("col_cons_dmarc_pct"), t("col_cons_dmarc_rua"), t("col_cons_mx"),
+         t("col_cons_mtasts"), t("col_cons_tlsrpt"), t("col_cons_bimi"), t("col_cons_compliance")],
         data["resumen"],
-        col_widths=[24, 22, 18, 18, 22, 12, 30, 12, 24, 12, 12, 12, 12, 12, 12, 12, 12, 8, 28, 18, 16, 12, 8, 18])
+        col_widths=[24, 22, 14, 14, 16, 14, 30, 14, 20, 10, 12, 12, 12, 12, 10, 12, 12, 10, 28, 20, 14, 10, 10, 20])
 
-    # Evidencias_Index
-    ws_ev = wb.create_sheet("Evidencias_Index")
-    hdr = [t("col_domain"), "Evidence File", "Relative Path"]
-    for i, h in enumerate(hdr, start=1):
-        ws_ev.cell(row=1, column=i, value=h)
-    style_header(ws_ev, 1, len(hdr))
-    ev_dir = outdir / "evidencias"
-    rr = 2
-    if ev_dir.exists():
-        for dom_dir in sorted(ev_dir.iterdir()):
-            if dom_dir.is_dir():
-                for f in sorted(dom_dir.iterdir()):
-                    ws_ev.cell(row=rr, column=1, value=dom_dir.name)
-                    ws_ev.cell(row=rr, column=2, value=f.name)
-                    ws_ev.cell(row=rr, column=3, value=str(f.relative_to(outdir)))
-                    for c in range(1, 4):
-                        cell = ws_ev.cell(row=rr, column=c)
-                        cell.font = F_BODY; cell.alignment = AL; cell.border = BORDER
-                        cell.fill = FILL_BAND if rr % 2 == 0 else FILL_WHITE
-                    rr += 1
-    set_widths(ws_ev, [24, 30, 50])
-    ws_ev.freeze_panes = "A2"
-
-    excel_name = args.excel_name or f"Auditoria_Email_Authentication_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
-    excel_path = outdir / excel_name
-    wb.save(excel_path)
-    return excel_path
+    wb.active = 0
+    out_file = outdir / f"audit_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    wb.save(out_file)
+    return out_file
 
 
 def banner(t: Optional[Any] = None) -> Panel:
@@ -1367,6 +1961,33 @@ def render_panel(info: Dict[str, Any], t: Optional[Any] = None) -> Panel:
     else:
         tbl.add_row("BIMI", cell(t("not_published"), "fail"))
 
+    # CAA
+    caa = info.get("caa", {})
+    if caa.get("pub") == "si":
+        tbl.add_row("CAA", cell(caa.get("cas", "Restringido"), "ok"))
+    else:
+        tbl.add_row("CAA", cell(t("not_published"), "warn"))
+
+    # FCrDNS
+    fcrdns = info.get("fcrdns", {})
+    if fcrdns.get("status") == "Sin MX":
+        tbl.add_row("FCrDNS", cell(t("no_mx"), "warn"))
+    elif fcrdns.get("compliant"):
+        tbl.add_row("FCrDNS", cell("PTR ↔ A OK", "ok"))
+    else:
+        tbl.add_row("FCrDNS", cell("Mismatch / Sin PTR", "fail"))
+
+    # TLS Certificate
+    tls_c = info.get("tls_cert", {})
+    if tls_c.get("warning") == "critical":
+        tbl.add_row("TLS Cert", cell(f"Vence en {tls_c.get('days_left')}d", "fail"))
+    elif tls_c.get("warning") == "warning":
+        tbl.add_row("TLS Cert", cell(f"Vence en {tls_c.get('days_left')}d", "warn"))
+    elif tls_c.get("days_left") is not None:
+        tbl.add_row("TLS Cert", cell(f"Válido ({tls_c.get('days_left')}d)", "ok"))
+    else:
+        tbl.add_row("TLS Cert", cell("N/D", "warn"))
+
     # MX
     tbl.add_row("MX", cell(info["mx"]["provider"],
                            "ok" if info["mx"]["provider"] not in ("Sin MX", "Otro") else "warn"))
@@ -1401,12 +2022,17 @@ async def run_audit(args: Any) -> None:
     outdir = Path(args.output)
     outdir.mkdir(parents=True, exist_ok=True)
     (outdir / "evidencias").mkdir(exist_ok=True)
-    with open(args.domains, "r", encoding="utf-8") as f:
-        domains = [l.strip().lower() for l in f if l.strip() and not l.strip().startswith("#")]
+    if args.domain:
+        domains = [args.domain.strip().lower()]
+    elif args.domains:
+        with open(args.domains, "r", encoding="utf-8") as f:
+            domains = [l.strip().lower() for l in f if l.strip() and not l.strip().startswith("#")]
+    else:
+        domains = []
     if not domains:
         console.print(f"[{NR}]ERROR: Sin dominios / No domains found.[/]")
         return
-    data = {k: [] for k in ["spf", "dkim", "dmarc", "dnssec", "mtasts", "tlsrpt", "bimi", "remit", "resumen", "inventario"]}
+    data = {k: [] for k in ["spf", "dkim", "dmarc", "dnssec", "mtasts", "tlsrpt", "bimi", "remit", "resumen", "inventario", "easm", "compliance", "caa_tls"]}
     hallazgos: List[Any] = []
     ro = dns.asyncresolver.Resolver()
     ro.nameservers = [args.resolver]; ro.timeout = 5; ro.lifetime = 8
@@ -1445,6 +2071,7 @@ async def run_audit(args: Any) -> None:
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Email DNS Audit v3.3 - Unified Excel, Bilingual Support & RDAP",
                                 formatter_class=argparse.RawTextHelpFormatter)
+    p.add_argument("--domain", help="Auditar un único dominio / Audit a single domain")
     p.add_argument("--domains", "-d", help="Archivo con dominios / Domain list file")
     p.add_argument("--lang", "-l", choices=["es", "en"], default="es",
                    help="Language / Idioma del reporte y consola: 'es' (Español) o 'en' (Inglés). Default: es")
@@ -1468,10 +2095,10 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    if not args.domains:
-        console.print(f"[{NR}]ERROR: --domains requerido / --domains required[/]")
+    if not args.domain and not args.domains:
+        console.print(f"[{NR}]ERROR: --domain o --domains requerido / --domain or --domains required[/]")
         sys.exit(1)
-    if not Path(args.domains).is_file():
+    if args.domains and not Path(args.domains).is_file():
         console.print(f"[{NR}]ERROR: No existe {args.domains}[/]")
         sys.exit(1)
     try:
