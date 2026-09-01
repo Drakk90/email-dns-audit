@@ -1,27 +1,23 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  run.sh — Ejecutor rápido de Email DNS Audit Neon v3.3
+#  run.sh — Ejecutor interactivo de Email DNS Audit Neon v3.3
 #  Autor: Eduardo Recinos (VCISO)
 #
-#  Uso / Usage:
-#    chmod +x run.sh
-#    ./run.sh                          # servers.txt · normal · 30 · es
-#    ./run.sh servers.txt normal 30 en # servers.txt en Inglés
-#    ./run.sh servers.txt deep 30 es   # servers.txt · modo DKIM profundo · Español
+#  Uso interactivo (Pregunta idioma y genera Excel en ese idioma):
+#    ./run.sh
 #
-#  Argumentos / Arguments:
-#    $1 = archivo de dominios / domains file (default: servers.txt)
-#    $2 = modo DKIM / dkim mode: normal (default) | deep
-#    $3 = meses rotativos / deep months (default: 30)
-#    $4 = idioma / language: es (default) | en
+#  Uso directo / Scripting:
+#    ./run.sh servers.txt normal 30 es   # Español
+#    ./run.sh servers.txt normal 30 en   # English
+#    ./run.sh servers.txt deep 30 en     # Deep DKIM en English
 # =============================================================================
 
 set -uo pipefail
 
 if [[ -t 1 ]]; then
-    RED=$'\e[31m'; GRN=$'\e[32m'; YEL=$'\e[33m'; CYA=$'\e[36m'; BLD=$'\e[1m'; RST=$'\e[0m'
+    RED=$'\e[31m'; GRN=$'\e[32m'; YEL=$'\e[33m'; CYA=$'\e[36m'; MAG=$'\e[35m'; BLD=$'\e[1m'; RST=$'\e[0m'
 else
-    RED=""; GRN=""; YEL=""; CYA=""; BLD=""; RST=""
+    RED=""; GRN=""; YEL=""; CYA=""; MAG=""; BLD=""; RST=""
 fi
 
 VENV_NAME="venv-email-audit"
@@ -29,7 +25,39 @@ PY_SCRIPT="email_dns_audit_neon.py"
 DOMAINS_FILE="${1:-servers.txt}"
 DKIM_MODE="${2:-normal}"
 DEEP_MONTHS="${3:-30}"
-LANG_CHOICE="${4:-es}"
+LANG_ARG="${4:-}"
+
+# ---------- 0. Selección interactiva de idioma ----------
+if [[ -z "$LANG_ARG" ]]; then
+    echo
+    echo "${MAG}${BLD}╔══════════════════════════════════════════════════════════════╗${RST}"
+    echo "${MAG}${BLD}║${RST}  ${CYA}${BLD}E M A I L   D N S   A U D I T   N E O N   v 3 . 3${RST}            ${MAG}${BLD}║${RST}"
+    echo "${MAG}${BLD}╚══════════════════════════════════════════════════════════════╝${RST}"
+    echo
+    echo "${CYA}🌐 Seleccione el idioma del reporte y consola / Select Language:${RST}"
+    echo "   ${BLD}[1]${RST} 🇪🇸 Español (Predeterminado / Default)"
+    echo "   ${BLD}[2]${RST} 🇬🇧 English"
+    echo
+    if [[ -t 0 ]]; then
+        read -r -p "👉 Opción / Option [1/2] (Enter = Español): " USER_LANG_INPUT
+    elif [ -c /dev/tty ]; then
+        read -r -p "👉 Opción / Option [1/2] (Enter = Español): " USER_LANG_INPUT < /dev/tty 2>/dev/null || read -r USER_LANG_INPUT 2>/dev/null || USER_LANG_INPUT=""
+    else
+        read -r USER_LANG_INPUT 2>/dev/null || USER_LANG_INPUT=""
+    fi
+    echo
+
+    case "${USER_LANG_INPUT,,}" in
+        2|en|english|inglés|ingles)
+            LANG_CHOICE="en"
+            ;;
+        *)
+            LANG_CHOICE="es"
+            ;;
+    esac
+else
+    LANG_CHOICE="${LANG_ARG:-es}"
+fi
 
 # Resolvers validadores para DNSSEC
 DNSSEC_RESOLVERS="1.1.1.1,8.8.8.8,9.9.9.9"
@@ -42,9 +70,9 @@ else
 fi
 
 if [[ "$LANG_CHOICE" == "en" ]]; then
-    echo "${CYA}[*]${RST} Email DNS Audit Neon v3.3 — Fast Runner (Language: English)"
+    echo "${CYA}[*]${RST} Email DNS Audit Neon v3.3 — Language: ${BLD}English${RST}"
 else
-    echo "${CYA}[*]${RST} Email DNS Audit Neon v3.3 — Ejecutor Rápido (Idioma: Español)"
+    echo "${CYA}[*]${RST} Email DNS Audit Neon v3.3 — Idioma: ${BLD}Español${RST}"
 fi
 
 # ---------- 1. Verificar dependencias ----------
@@ -86,7 +114,11 @@ esac
 
 # ---------- 4. Ejecutar la auditoría ----------
 echo "${CYA}[*]${RST} DNSSEC resolvers: ${DNSSEC_RESOLVERS}"
-echo "${CYA}[*]${RST} Ejecutando auditoría / Executing audit..."
+if [[ "$LANG_CHOICE" == "en" ]]; then
+    echo "${CYA}[*]${RST} Running audit (Excel report will be generated in English)..."
+else
+    echo "${CYA}[*]${RST} Ejecutando auditoría (El reporte Excel se generará en Español)..."
+fi
 echo
 
 "$VENV_PYTHON" "$PY_SCRIPT" \
