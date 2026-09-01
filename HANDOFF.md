@@ -1,15 +1,14 @@
 # HANDOFF — Estado del Proyecto y Próximos Pasos
 
 ## Estado Actual
-- **Versión:** v3.2 (en transición a v3.3 con soporte bilingüe EN/ES y arquitectura modular).
-- **Fase SDD:** `sdd-init` completado. Contexto del stack, testing y persistencia inicializados.
-- **Git Remote:** `https://github.com/Drakk90/email-dns-audit.git` (autenticado como `Drakk90`).
-- **Hooks:** Pre-commit hook de Gentleman Guardian Angel (`gga`) activo.
+- **Versión:** v3.3.0 (Liberada y sincronizada en GitHub).
+- **Ejecución Interactiva:** `run.sh` pregunta interactivamente el idioma (`es` / `en`) al ejecutarse sin flags.
+- **Reportes:** Excel unificado generado dinámicamente en el idioma seleccionado (pestañas, encabezados y formato condicional).
+- **Git Remote:** `https://github.com/Drakk90/email-dns-audit.git` (autenticado y al día con `origin/main`).
 
 ## Siguiente Paso Inmediato
-1. Implementar soporte bilingüe (`--lang [es|en]`) para consola Rich y generación de reportes Excel.
-2. Actualizar `README.md` a versión 100% bilingüe (Inglés y Español) con instrucciones claras y asertivas.
-3. Crear suite de tests unitarios (`pytest`) para validaciones DNS (SPF, DMARC, DKIM, DNSSEC).
+1. Auditar lista de dominios de producción (`servers.txt`).
+2. Recibir feedback de auditoría o nuevos requerimientos de evaluación (ej. DANE TLSA exhaustivo, certificados SSL por puerto 25 STARTTLS).
 
 ## Bloqueos / Riesgos
 - Ninguno actualmente.
