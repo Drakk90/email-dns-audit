@@ -1,14 +1,9 @@
 # =============================================================================
 #  .gitignore — Email DNS Audit Neon
 #  Autor: Eduardo Recinos
-#  Objetivo: evitar subir entornos virtuales, resultados de auditoría con
-#            evidencia real, credenciales y archivos temporales.
 # =============================================================================
 
-# -----------------------------------------------------------------------------
-# ENTORNOS VIRTUALES DE PYTHON
-# Nunca se suben al repositorio. Cada usuario crea el suyo localmente.
-# -----------------------------------------------------------------------------
+# Entornos virtuales
 venv-email-audit/
 venv/
 .venv/
@@ -18,154 +13,28 @@ ENV/
 virtualenv/
 pyvenv.cfg
 
-# -----------------------------------------------------------------------------
-# RESULTADOS DE AUDITORÍA (CONTIENEN EVIDENCIA REAL — CONFIDENCIAL)
-# Las carpetas audit_* y sus salidas incluyen datos de tu infraestructura.
-# NO deben publicarse en un repositorio.
-# -----------------------------------------------------------------------------
+# Resultados de auditoría y reportes (confidencial)
 audit_*/
 Auditoria_*.xlsx
 Auditoria_Email_Authentication_*.xlsx
 *.xlsx
-audit_spf.csv
-audit_dkim.csv
-audit_dmarc.csv
-audit_dnssec.csv
-audit_mta_sts.csv
-audit_tls_rpt.csv
-audit_bimi.csv
-audit_remitentes_autorizados.csv
-audit_hallazgos.csv
-audit_resumen.csv
+audit_*.csv
 evidencias/
 run.log
 *.log
-
-# Certificados VMC descargados durante auditorías BIMI
 *.pem
-bimi_vmc.pem
 
-# -----------------------------------------------------------------------------
-# LISTA REAL DE DOMINIOS (opcional — descomenta si tu servers.txt es sensible)
-# Si prefieres compartir solo un servers.example.txt de muestra y mantener
-# tu lista real privada, descomenta la línea siguiente:
-# -----------------------------------------------------------------------------
-# servers.txt
+# Archivos de configuración local
+servers.txt
 
-# -----------------------------------------------------------------------------
-# CREDENCIALES Y SECRETOS — NUNCA subir
-# -----------------------------------------------------------------------------
-.env
-.env.*
-*.env
-secrets.json
-credentials.json
-config.local.*
-*.key
-*.pem.private
-api_keys.txt
-token.txt
+# Zona 2: Memoria local (NO viaja en git)
+MEMORY.md
+memory/
 
-# -----------------------------------------------------------------------------
-# CACHÉ Y ARCHIVOS COMPILADOS DE PYTHON
-# -----------------------------------------------------------------------------
+# Local AI runtime state
+.atl/
+
+# Python Bytecode
 __pycache__/
 *.py[cod]
 *$py.class
-*.so
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
-
-# -----------------------------------------------------------------------------
-# HERRAMIENTAS DE TESTING Y COBERTURA
-# -----------------------------------------------------------------------------
-.pytest_cache/
-.coverage
-.coverage.*
-htmlcov/
-.tox/
-.nox/
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-
-# -----------------------------------------------------------------------------
-# EDITORES E IDEs
-# -----------------------------------------------------------------------------
-# Visual Studio Code
-.vscode/
-*.code-workspace
-
-# PyCharm / IntelliJ
-.idea/
-*.iml
-*.iws
-
-# Vim
-*.swp
-*.swo
-*.swn
-*~
-.*.sw?
-
-# Emacs
-*~
-\#*\#
-.\#*
-
-# Sublime Text
-*.sublime-project
-*.sublime-workspace
-
-# -----------------------------------------------------------------------------
-# SISTEMA OPERATIVO
-# -----------------------------------------------------------------------------
-# Linux
-.directory
-.Trash-*
-
-# macOS
-.DS_Store
-.AppleDouble
-.LSOverride
-._*
-
-# Windows
-Thumbs.db
-Thumbs.db:encryptable
-ehthumbs.db
-Desktop.ini
-$RECYCLE.BIN/
-*.lnk
-
-# -----------------------------------------------------------------------------
-# ARCHIVOS TEMPORALES Y DE RESPALDO
-# -----------------------------------------------------------------------------
-*.tmp
-*.temp
-*.bak
-*.backup
-*.old
-*.orig
-
-# -----------------------------------------------------------------------------
-# JUPYTER (por si documentas análisis en notebooks)
-# -----------------------------------------------------------------------------
-.ipynb_checkpoints/
-*.ipynb_checkpoints
