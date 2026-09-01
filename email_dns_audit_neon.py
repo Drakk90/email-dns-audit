@@ -1583,12 +1583,26 @@ def process_results(info: Dict[str, Any], counters: Dict[str, Any], data: Dict[s
                 t("sev_critical"), "Claim / Delete Dangling DNS"
             ])
 
+    # CAA & TLS data
+    caa = info.get("caa", {})
+    fcrdns = info.get("fcrdns", {})
+    tls_c = info.get("tls_cert", {})
+    data["caa_tls"].append([
+        domain,
+        caa.get("cas", "N/D"),
+        caa.get("iodef", "N/D"),
+        fcrdns.get("status", "N/D"),
+        str(tls_c.get("days_left", "N/D")) if tls_c.get("days_left") is not None else "N/D",
+        tls_c.get("issuer", "N/D")
+    ])
+
     # Inventario y resumen
     brand = info.get("brand") or derive_brand_from_domain(domain)
     owner = t("default_internal_owner")
     data["inventario"].append([n, domain, t("production"), brand, info["registrar"], info["expires"],
                               t("yes") if info["mx"]["provider"] != "Sin MX" else t("no"), owner,
-                              info["ns_provider"], ds["dnskey_pub"], f"CISO Score: {ciso_score} ({ciso_grade})"])
+                              info["ns_provider"], ds["dnskey_pub"], caa.get("cas", "N/D"),
+                              fcrdns.get("status", "N/D"), f"CISO Score: {ciso_score} ({ciso_grade})"])
     data["resumen"].append([domain, info["registrar"], info["created"], info["expires"], info["status"],
                            info["dnssec_whois"], info["ns_list"], info["soa_serial"], ds["diag"],
                            s["pub"], s["all"], s["lookups"], s["void"], s["multi"], d["pub"], d["p"],
@@ -1731,23 +1745,30 @@ def build_excel(outdir: Path, data: Dict[str, List[Any]], hallazgos: List[Any], 
     ws_cover.row_dimensions[8].height = 25
 
     ws_cover.cell(row=9, column=1, value=t("col_id"))
-    ws_cover.cell(row=9, column=2, value=t("col_domain"))
-    ws_cover.cell(row=9, column=4, value=t("col_control"))
-    ws_cover.cell(row=9, column=6, value=t("col_finding_desc"))
-    ws_cover.cell(row=9, column=10, value=t("col_severity"))
-    ws_cover.cell(row=9, column=12, value=t("col_action"))
+    ws_cover.merge_cells("B9:C9"); ws_cover.cell(row=9, column=2, value=t("col_domain"))
+    ws_cover.merge_cells("D9:E9"); ws_cover.cell(row=9, column=4, value=t("col_control"))
+    ws_cover.merge_cells("F9:I9"); ws_cover.cell(row=9, column=6, value=t("col_finding_desc"))
+    ws_cover.merge_cells("J9:K9"); ws_cover.cell(row=9, column=10, value=t("col_severity"))
+    ws_cover.merge_cells("L9:N9"); ws_cover.cell(row=9, column=12, value=t("col_action"))
     style_header(ws_cover, 9, 14, fill=FILL_H2, font=F_H2)
 
     for idx, h in enumerate(crit_high_findings, start=10):
         ws_cover.cell(row=idx, column=1, value=h[0]).font = F_BODY
-        ws_cover.cell(row=idx, column=2, value=h[1]).font = F_BODY
-        ws_cover.cell(row=idx, column=4, value=h[2]).font = F_BODY
-        ws_cover.cell(row=idx, column=6, value=h[3]).font = F_BODY
+        ws_cover.merge_cells(f"B{idx}:C{idx}"); ws_cover.cell(row=idx, column=2, value=h[1]).font = F_BODY
+        ws_cover.merge_cells(f"D{idx}:E{idx}"); ws_cover.cell(row=idx, column=4, value=h[2]).font = F_BODY
+        ws_cover.merge_cells(f"F{idx}:I{idx}"); ws_cover.cell(row=idx, column=6, value=h[3]).font = F_BODY
+        ws_cover.merge_cells(f"J{idx}:K{idx}")
         ws_cover.cell(row=idx, column=10, value=h[4]).font = Font(name="Calibri", size=10, bold=True, color="C00000" if h[4] == t("sev_critical") else "ED7D31")
-        ws_cover.cell(row=idx, column=12, value=h[5]).font = F_BODY
-        ws_cover.row_dimensions[idx].height = 20
+        ws_cover.merge_cells(f"L{idx}:N{idx}"); ws_cover.cell(row=idx, column=12, value=h[5]).font = F_BODY
+        ws_cover.row_dimensions[idx].height = 22
 
-    set_widths(ws_cover, [14, 20, 6, 16, 6, 28, 6, 6, 6, 16, 6, 32, 6, 6])
+        row_fill = FILL_BAND if idx % 2 == 1 else FILL_WHITE
+        for c in range(1, 15):
+            cell = ws_cover.cell(row=idx, column=c)
+            cell.border = BORDER
+            cell.fill = row_fill
+
+    set_widths(ws_cover, [14, 12, 12, 11, 11, 10, 10, 10, 10, 10, 10, 12, 12, 12])
 
     def add_sheet(name: str, headers: List[str], rows: List[Any], status_col: Optional[str] = None, sev_col: Optional[str] = None, col_widths: Optional[List[int]] = None) -> Any:
         ws_new = wb.create_sheet(name)
