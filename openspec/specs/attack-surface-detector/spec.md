@@ -1,24 +1,39 @@
 # Attack Surface Detector Specification
 
 ## Purpose
-Offline algorithmic detection of lookalike domains (typosquatting, bit-squatting, homoglyphs) and dangling DNS records vulnerable to Subdomain Takeover.
+Identify external attack surface exposures, homoglyphic lookalike domains, typosquatting registrations, and dangling DNS subdomain takeovers across audited organizational domains.
 
 ## Requirements
 
-### Requirement: Local Typosquatting and Homoglyph Generation
-The system MUST generate domain permutations using Levenshtein distance, vowel swaps, bit-flips, and Unicode confusable characters without external APIs.
+### Requirement: Lookalike and Typosquatting Permutation Engine
+The system MUST generate permutation candidates for audited domains using homoglyphs (e.g. `o` -> `0`, `l` -> `1`, `rn` -> `m`), character omissions (Levenshtein distance 1), character transpositions, alternative TLD variations (`.co`, `.net`, `.org`, `.info`), and brand-phishing prefixes (`login-`, `secure-`, `support-`).
 
-#### Scenario: Typosquat candidate discovery
-- GIVEN a primary corporate domain `example.com`
-- WHEN the detector runs permutation algorithms
-- THEN the system MUST produce lookalike candidates (e.g. `examp1e.com`, `exampel.com`)
-- AND check DNS A/MX resolution to identify actively registered threats.
+#### Scenario: Generating domain variations
+- GIVEN a domain `example.com`
+- WHEN generating candidate attack surface variations
+- THEN the system MUST produce at least 15 unique permutation candidates.
 
-### Requirement: Dangling CNAME Subdomain Takeover Detection
-The system MUST resolve discovered CNAME records and match unresponsive target hostnames against a signature database of 50+ third-party service providers.
+### Requirement: Active Candidate Resolution and Threat Classification
+The system MUST asynchronously query `A` and `MX` records for each generated candidate and classify threat level as `Critical` (active MX server), `High` (active A record without MX), or `Info` (unregistered / defensive opportunity).
 
-#### Scenario: Unclaimed S3 bucket CNAME
-- GIVEN a subdomain `assets.example.com` with a CNAME pointing to an unallocated AWS S3 bucket
-- WHEN the detector evaluates HTTP responses and DNS resolution
-- THEN the system MUST detect the dangling CNAME signature
-- AND flag a critical vulnerability.
+#### Scenario: Classifying threat of active mail exchange
+- GIVEN a lookalike domain `examp1e.com` with active MX records
+- WHEN probing DNS records
+- THEN the system MUST assign `Critical` threat severity and recommend `Bloquear / Monitorear MX`.
+
+### Requirement: Subdomain Takeover Signature Probing
+The system MUST resolve DNS CNAME records for common subdomains (`mail`, `webmail`, `portal`, `dev`, `stage`, `cdn`, `assets`, `docs`, `status`, `help`, `app`) and probe for dangling third-party service provider fingerprints (GitHub Pages, AWS S3, Heroku, Azure, Zendesk, Fastly, Shopify, Cloudfront).
+
+#### Scenario: Detecting dangling CNAME provider
+- GIVEN a subdomain `status.example.com` pointing to `unregistered.herokuapp.com`
+- WHEN probing HTTP responses and DNS
+- THEN the system MUST identify the dangling CNAME and generate a `Critical` finding for Subdomain Takeover.
+
+### Requirement: Granular Findings, Typosquats Data Tables & On-Disk Evidence Files
+The system MUST export detailed findings with RFC references in `Email & DNS Posture` and resolved IP/MX status for each generated lookalike in `Attack Surface & Typosquats`, and MUST write raw evidence artifacts for typosquatting scans and subdomain takeover probes into the output `{outdir}/evidencias/` directory for every audited domain.
+
+#### Scenario: Writing EASM and Takeover raw evidence files
+- GIVEN a domain undergoing attack surface and subdomain takeover evaluation
+- WHEN probing lookalike variations and CNAME targets
+- THEN the system MUST write `{outdir}/evidencias/{domain}_easm.txt` containing resolved IPs and MX servers for all lookalike candidates
+- AND write `{outdir}/evidencias/{domain}_takeover.txt` containing scanned CNAME records and status checks.

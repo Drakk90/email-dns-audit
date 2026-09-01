@@ -865,7 +865,7 @@ async def check_caa(domain: str, ro: dns.asyncresolver.Resolver, outdir: Path, i
     }
 
 
-async def check_fcrdns(mx_hosts: List[str], ro: dns.asyncresolver.Resolver) -> Dict[str, Any]:
+async def check_fcrdns(mx_hosts: List[str], ro: dns.asyncresolver.Resolver, outdir: Optional[Path] = None, domain: str = "") -> Dict[str, Any]:
     if not mx_hosts:
         return {"status": "Sin MX", "details": "No MX hosts", "compliant": True}
     
@@ -899,17 +899,28 @@ async def check_fcrdns(mx_hosts: List[str], ro: dns.asyncresolver.Resolver) -> D
                 all_aligned = False
 
     if not any_tested:
-        return {"status": "No verificado", "details": "No se resolvieron IPs de MX", "compliant": False}
+        res = {"status": "No verificado", "details": "No se resolvieron IPs de MX", "compliant": False}
+    else:
+        status = "Alineado (FCrDNS OK)" if all_aligned else "Desalineado / Sin PTR"
+        res = {
+            "status": status,
+            "details": "; ".join(results),
+            "compliant": all_aligned
+        }
 
-    status = "Alineado (FCrDNS OK)" if all_aligned else "Desalineado / Sin PTR"
-    return {
-        "status": status,
-        "details": "; ".join(results),
-        "compliant": all_aligned
-    }
+    if outdir and domain:
+        ev_dir = outdir / "evidencias"
+        ev_dir.mkdir(parents=True, exist_ok=True)
+        with open(ev_dir / f"{domain}_fcrdns.txt", "w", encoding="utf-8") as f:
+            f.write(f"=== FCrDNS (FORWARD-CONFIRMED REVERSE DNS) FOR {domain} ===\n")
+            f.write(f"Generated: {datetime.now().isoformat()}\n")
+            f.write(f"Status: {res['status']}\n")
+            f.write(f"Compliant: {res['compliant']}\n")
+            f.write(f"Details:\n" + "\n".join(f"  - {d}" for d in results) + "\n")
+    return res
 
 
-async def check_tls_certificate_health(mx_hosts: List[str], domain: str) -> Dict[str, Any]:
+async def check_tls_certificate_health(mx_hosts: List[str], domain: str, outdir: Optional[Path] = None) -> Dict[str, Any]:
     target_hosts = mx_hosts if mx_hosts else [f"mail.{domain}", domain]
 
     def _probe_socket(host: str, port: int = 443) -> Optional[Dict[str, Any]]:
@@ -946,6 +957,7 @@ async def check_tls_certificate_health(mx_hosts: List[str], domain: str) -> Dict
             return None
 
     loop = asyncio.get_running_loop()
+    final_res = {"status": "No evaluado", "days_left": None, "expires": "N/A", "issuer": "N/D", "san": "N/D", "warning": None, "host": "N/D"}
     for host in target_hosts[:2]:
         res = await loop.run_in_executor(None, _probe_socket, host, 443)
         if res:
@@ -956,7 +968,7 @@ async def check_tls_certificate_health(mx_hosts: List[str], domain: str) -> Dict
                 warn = "critical"
             elif days <= 30:
                 warn = "warning"
-            return {
+            final_res = {
                 "status": status,
                 "days_left": days,
                 "expires": res["expires"],
@@ -965,11 +977,25 @@ async def check_tls_certificate_health(mx_hosts: List[str], domain: str) -> Dict
                 "host": host,
                 "warning": warn
             }
+            break
 
-    return {"status": "No evaluado", "days_left": None, "expires": "N/A", "issuer": "N/D", "san": "N/D", "warning": None, "host": "N/D"}
+    if outdir:
+        ev_dir = outdir / "evidencias"
+        ev_dir.mkdir(parents=True, exist_ok=True)
+        with open(ev_dir / f"{domain}_tls_cert.txt", "w", encoding="utf-8") as f:
+            f.write(f"=== TLS CERTIFICATE HEALTH FOR {domain} ===\n")
+            f.write(f"Generated: {datetime.now().isoformat()}\n")
+            f.write(f"Probed Host: {final_res['host']}\n")
+            f.write(f"Status: {final_res['status']}\n")
+            f.write(f"Days Left: {final_res['days_left']}\n")
+            f.write(f"Expires: {final_res['expires']}\n")
+            f.write(f"Issuer: {final_res['issuer']}\n")
+            f.write(f"SANs: {final_res['san']}\n")
+
+    return final_res
 
 
-async def check_dmarc_external_report_auth(domain: str, rua: str, ro: dns.asyncresolver.Resolver) -> Dict[str, Any]:
+async def check_dmarc_external_report_auth(domain: str, rua: str, ro: dns.asyncresolver.Resolver, outdir: Optional[Path] = None) -> Dict[str, Any]:
     if not rua:
         return {"external": False, "authorized": True, "target": "N/A", "details": "Sin rua"}
     
@@ -1007,12 +1033,24 @@ async def check_dmarc_external_report_auth(domain: str, rua: str, ro: dns.asyncr
             auth_results.append(f"{target} [Sin registro RFC 7489]")
             all_auth = False
 
-    return {
+    res = {
         "external": True,
         "authorized": all_auth,
         "target": ", ".join(set(external_targets)),
         "details": "; ".join(auth_results)
     }
+
+    if outdir:
+        ev_dir = outdir / "evidencias"
+        ev_dir.mkdir(parents=True, exist_ok=True)
+        with open(ev_dir / f"{domain}_dmarc_external_auth.txt", "w", encoding="utf-8") as f:
+            f.write(f"=== DMARC EXTERNAL REPORT AUTHORIZATION (RFC 7489) FOR {domain} ===\n")
+            f.write(f"Generated: {datetime.now().isoformat()}\n")
+            f.write(f"External Targets: {res['target']}\n")
+            f.write(f"All Authorized: {res['authorized']}\n")
+            f.write(f"Details:\n" + "\n".join(f"  - {d}" for d in auth_results) + "\n")
+
+    return res
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1092,7 +1130,7 @@ def generate_lookalikes(domain: str) -> List[Tuple[str, str]]:
     return unique_candidates[:20]
 
 
-async def check_lookalikes(domain: str, ro: dns.asyncresolver.Resolver, t: Optional[Any] = None) -> List[Dict[str, Any]]:
+async def check_lookalikes(domain: str, ro: dns.asyncresolver.Resolver, outdir: Optional[Path] = None, t: Optional[Any] = None) -> List[Dict[str, Any]]:
     """Probes generated lookalike domains for active A and MX DNS records."""
     if not t: t = lambda k: k
     candidates = generate_lookalikes(domain)
@@ -1136,10 +1174,26 @@ async def check_lookalikes(domain: str, ro: dns.asyncresolver.Resolver, t: Optio
     tasks = [probe_one(c, mt) for c, mt in candidates]
     if tasks:
         results = await asyncio.gather(*tasks)
+
+    if outdir:
+        ev_dir = outdir / "evidencias"
+        ev_dir.mkdir(parents=True, exist_ok=True)
+        lines = [
+            f"=== TYPOSQUATTING & EASM REPORT FOR {domain} ===",
+            f"Generated: {datetime.now().isoformat()}",
+            f"Total Variations Probed: {len(results)}",
+            f"Active Lookalikes Found: {sum(1 for r in results if r.get('registered'))}",
+            "-" * 60,
+        ]
+        for r in results:
+            lines.append(f"Candidate: {r['lookalike']:<25} Type: {r['type']:<16} Threat: {r['threat']:<10} IPs: {r['ips']:<20} MX: {r['mx']}")
+        with open(ev_dir / f"{domain}_easm.txt", "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
+
     return results
 
 
-async def check_subdomain_takeover(domain: str, ro: dns.asyncresolver.Resolver, http: httpx.AsyncClient, t: Optional[Any] = None) -> List[Dict[str, Any]]:
+async def check_subdomain_takeover(domain: str, ro: dns.asyncresolver.Resolver, http: httpx.AsyncClient, outdir: Optional[Path] = None, t: Optional[Any] = None) -> List[Dict[str, Any]]:
     """Checks common subdomains for dangling CNAME takeovers against signature database."""
     if not t: t = lambda k: k
     sub_prefixes = ["mail", "webmail", "portal", "dev", "stage", "cdn", "assets", "docs", "status", "help", "app"]
@@ -1187,7 +1241,24 @@ async def check_subdomain_takeover(domain: str, ro: dns.asyncresolver.Resolver, 
 
     tasks = [probe_sub(p) for p in sub_prefixes]
     res_list = await asyncio.gather(*tasks)
-    return [r for r in res_list if r is not None]
+    filtered = [r for r in res_list if r is not None]
+
+    if outdir:
+        ev_dir = outdir / "evidencias"
+        ev_dir.mkdir(parents=True, exist_ok=True)
+        lines = [
+            f"=== SUBDOMAIN TAKEOVER AUDIT FOR {domain} ===",
+            f"Generated: {datetime.now().isoformat()}",
+            f"Tested Subdomain Prefixes: {len(sub_prefixes)}",
+            f"Dangling CNAMEs Detected: {sum(1 for r in filtered if r.get('dangling'))}",
+            "-" * 60,
+        ]
+        for r in filtered:
+            lines.append(f"FQDN: {r['fqdn']:<30} CNAME: {r['cname']:<35} Provider: {r['provider']:<15} Dangling: {r['dangling']}")
+        with open(ev_dir / f"{domain}_takeover.txt", "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
+
+    return filtered
 
 
 def evaluate_ciso_compliance_and_score(info: Dict[str, Any], easm_res: List[Dict[str, Any]], takeover_res: List[Dict[str, Any]], t: Optional[Any] = None) -> Tuple[int, str, List[List[str]]]:
@@ -1317,8 +1388,8 @@ async def audit_domain(domain: str, args: Any, ro: dns.asyncresolver.Resolver, h
     tlsrpt_task = check_tlsrpt(domain, ro, outdir, ip)
     bimi_task = check_bimi(domain, ro, http, outdir, ip)
     caa_task = check_caa(domain, ro, outdir, ip)
-    easm_task = check_lookalikes(domain, ro, t=t)
-    takeover_task = check_subdomain_takeover(domain, ro, http, t=t)
+    easm_task = check_lookalikes(domain, ro, outdir=outdir, t=t)
+    takeover_task = check_subdomain_takeover(domain, ro, http, outdir=outdir, t=t)
 
     # Preparar selectores DKIM
     if args.deep_dkim:
@@ -1345,9 +1416,9 @@ async def audit_domain(domain: str, args: Any, ro: dns.asyncresolver.Resolver, h
     # Secondary network probers dependent on MX and DMARC rua
     mx_hosts = [x.split()[1] for x in mx_res["raw"].split(";") if len(x.split()) > 1]
     fcrdns_res, tls_cert_res, dmarc_ext_res = await asyncio.gather(
-        check_fcrdns(mx_hosts, ro),
-        check_tls_certificate_health(mx_hosts, domain),
-        check_dmarc_external_report_auth(domain, dmarc_res.get("rua", ""), ro)
+        check_fcrdns(mx_hosts, ro, outdir=outdir, domain=domain),
+        check_tls_certificate_health(mx_hosts, domain, outdir=outdir),
+        check_dmarc_external_report_auth(domain, dmarc_res.get("rua", ""), ro, outdir=outdir)
     )
 
     info = {
@@ -1606,7 +1677,10 @@ def build_excel(outdir: Path, data: Dict[str, List[Any]], hallazgos: List[Any], 
     except Exception:
         pass
 
-    for r in range(1, 45):
+    crit_high_findings = [h for h in hallazgos if h[4] in (t("sev_critical"), t("sev_high"))]
+    max_cover_rows = max(45, 15 + len(crit_high_findings))
+
+    for r in range(1, max_cover_rows):
         for c in range(1, 15):
             ws_cover.cell(row=r, column=c).fill = FILL_WHITE
 
@@ -1649,7 +1723,7 @@ def build_excel(outdir: Path, data: Dict[str, List[Any]], hallazgos: List[Any], 
     ws_cover.row_dimensions[5].height = 22
     ws_cover.row_dimensions[6].height = 22
 
-    # Hallazgos Prioritarios en Portada
+    # Hallazgos Prioritarios en Portada (100% exhaustivo, sin truncado)
     ws_cover.merge_cells("A8:N8")
     hf_hdr = ws_cover["A8"]
     hf_hdr.value = t("top_findings_title")
@@ -1664,7 +1738,6 @@ def build_excel(outdir: Path, data: Dict[str, List[Any]], hallazgos: List[Any], 
     ws_cover.cell(row=9, column=12, value=t("col_action"))
     style_header(ws_cover, 9, 14, fill=FILL_H2, font=F_H2)
 
-    crit_high_findings = [h for h in hallazgos if h[4] in (t("sev_critical"), t("sev_high"))][:15]
     for idx, h in enumerate(crit_high_findings, start=10):
         ws_cover.cell(row=idx, column=1, value=h[0]).font = F_BODY
         ws_cover.cell(row=idx, column=2, value=h[1]).font = F_BODY

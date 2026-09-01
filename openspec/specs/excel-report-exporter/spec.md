@@ -14,14 +14,15 @@ The system MUST generate an `.xlsx` workbook containing structured sheets includ
 - THEN the system MUST produce exactly one executive dashboard sheet at index 0 titled `Resumen` (when `--lang es`) or `Summary` (when `--lang en`)
 - AND the workbook MUST NOT contain any colliding `Resumen1` or `Summary1` sheets.
 
-### Requirement: Executive Summary Dashboard Layout
-The `Executive Summary` dashboard sheet MUST include executive title banner, metadata summary (author, CISO role, date), overall numerical score KPI card, total domains card, critical findings card, high findings card, average compliance KPI card, and a top priority findings table displaying the top critical and high severity findings.
+### Requirement: Executive Summary Dashboard Layout & Evidentiary Completeness
+The `Executive Summary` dashboard sheet MUST include executive title banner, metadata summary (author, CISO role, date), overall numerical score KPI card, total domains card, critical findings card, high findings card, average compliance KPI card, and an unbounded findings table displaying 100% of all critical and high severity findings across all audited domains without artificial truncation limits.
 
-#### Scenario: Exporting executive dashboard cards
-- GIVEN audit results with calculated findings and compliance scores
-- WHEN generating the executive summary sheet
-- THEN the system MUST render formatted metric cards (Total Domains, Critical Findings, High Findings, CISO Risk Score, Average Compliance) with distinct color fills
-- AND render a top findings table with ID, Domain, Control, Description, Severity, and Recommendation columns.
+#### Scenario: Exporting complete multi-domain findings
+- GIVEN an audit execution of multiple domains yielding critical and high findings
+- WHEN generating the Executive Summary dashboard sheet
+- THEN the system MUST render all critical and high findings in the table starting at row 10
+- AND each finding MUST display its ID, Domain, Control, Description, Severity, and Recommended Action
+- AND the sheet background styling MUST dynamically encompass all generated rows.
 
 ### Requirement: Granular Findings and Typosquats Data Tables
 The system MUST export detailed findings with RFC references in `Email & DNS Posture` and resolved IP/MX status for each generated lookalike in `Attack Surface & Typosquats`.
