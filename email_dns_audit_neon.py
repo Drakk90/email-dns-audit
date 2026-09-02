@@ -2024,9 +2024,12 @@ def build_excel(outdir: Path, data: Dict[str, List[Any]], hallazgos: List[Any], 
 
 def banner(t: Optional[Any] = None) -> Panel:
     if not t: t = lambda k: k
+    sub_text = t("app_subtitle")
+    sub_pad = " " * max(0, 60 - len(sub_text))
+    title_pad = " " * 24
     art = (f"[bold {NM}]╔══════════════════════════════════════════════════════════════╗[/]\n"
-           f"[bold {NM}]║[/]  [bold {NC}]E M A I L[/]  [bold {NG}]D N S[/]  [bold {NO}]A U D I T[/]  [bold {NY}]v 3 . 3[/]            [bold {NM}]║[/]\n"
-           f"[bold {NM}]║[/]  [{NP} italic]{t('app_subtitle')}[/]                  [bold {NM}]║[/]\n"
+           f"[bold {NM}]║[/]  [bold {NC}]E M A I L[/]  [bold {NG}]D N S[/]  [bold {NO}]A U D I T[/]  [bold {NY}]v 3 . 3[/]{title_pad}[bold {NM}]║[/]\n"
+           f"[bold {NM}]║[/]  [{NP} italic]{sub_text}[/]{sub_pad}[bold {NM}]║[/]\n"
            f"[bold {NM}]╚══════════════════════════════════════════════════════════════╝[/]\n"
            f"  [{NC}]{t('lbl_author')}:[/] [bold {NY}]{t('author')}[/]   [{NC}]CISO:[/] [bold {NG}]{t('ciso')}[/]   "
            f"[{NC}]Version:[/] [bold {NO}]3.3[/]")

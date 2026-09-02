@@ -38,7 +38,7 @@ $LangChoice = $Lang
 if ([string]::IsNullOrWhiteSpace($LangChoice)) {
     Write-Host ""
     Write-Host "╔══════════════════════════════════════════════════════════════╗" -ForegroundColor Magenta
-    Write-Host "║  E M A I L   D N S   A U D I T   N E O N   v 3 . 3            ║" -ForegroundColor Cyan
+    Write-Host "║  E M A I L   D N S   A U D I T   N E O N   v 3 . 3           ║" -ForegroundColor Cyan
     Write-Host "╚══════════════════════════════════════════════════════════════╝" -ForegroundColor Magenta
     Write-Host ""
     Write-Host "🌐 Seleccione el idioma del reporte y consola / Select Language:" -ForegroundColor Cyan

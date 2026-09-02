@@ -75,5 +75,24 @@ class TestVerification(unittest.TestCase):
             self.assertEqual(ws_cons["AB2"].value, "=(X2+Y2+Z2+AA2)/100")
             self.assertEqual(ws_cons["AB2"].number_format, "0.0%")
 
+    def test_banner_box_character_alignment(self):
+        import re
+        from email_dns_audit_neon import banner
+        for lang in ("es", "en"):
+            t = get_translator(lang)
+            b = banner(t)
+            # The renderable string inside the Panel
+            raw_text = b.renderable
+            clean_text = re.sub(r"\[.*?\]", "", raw_text)
+            lines = clean_text.splitlines()
+            self.assertEqual(len(lines[0]), 64, f"Top border length mismatch in {lang}")
+            self.assertEqual(len(lines[1]), 64, f"Title line length mismatch in {lang}")
+            self.assertEqual(len(lines[2]), 64, f"Subtitle line length mismatch in {lang}")
+            self.assertEqual(len(lines[3]), 64, f"Bottom border length mismatch in {lang}")
+            self.assertTrue(lines[0].startswith("╔") and lines[0].endswith("╗"))
+            self.assertTrue(lines[1].startswith("║") and lines[1].endswith("║"))
+            self.assertTrue(lines[2].startswith("║") and lines[2].endswith("║"))
+            self.assertTrue(lines[3].startswith("╚") and lines[3].endswith("╝"))
+
 if __name__ == "__main__":
     unittest.main()

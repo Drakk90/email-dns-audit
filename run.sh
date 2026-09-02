@@ -36,7 +36,7 @@ fi
 if [[ -z "$LANG_ARG" ]]; then
     echo
     echo "${MAG}${BLD}╔══════════════════════════════════════════════════════════════╗${RST}"
-    echo "${MAG}${BLD}║${RST}  ${CYA}${BLD}E M A I L   D N S   A U D I T   N E O N   v 3 . 3${RST}            ${MAG}${BLD}║${RST}"
+    echo "${MAG}${BLD}║${RST}  ${CYA}${BLD}E M A I L   D N S   A U D I T   N E O N   v 3 . 3${RST}           ${MAG}${BLD}║${RST}"
     echo "${MAG}${BLD}╚══════════════════════════════════════════════════════════════╝${RST}"
     echo
     echo "${CYA}🌐 Seleccione el idioma del reporte y consola / Select Language:${RST}"
