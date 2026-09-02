@@ -30,9 +30,22 @@ servers.txt
 # Zona 2: Memoria local (NO viaja en git)
 MEMORY.md
 memory/
+.memory/
 
-# Local AI runtime state
+# Local AI runtime state & local overrides (prevención de inyección de contexto)
 .atl/
+.claude/
+.agents/
+*.local.md
+*.md.local
+*.override.md
+*.prompt.md
+Antigravity.local.md
+antigravity.local.md
+scratch.md
+scratch/
+notes.md
+todo.md
 
 # Python Bytecode
 __pycache__/
