@@ -4,18 +4,18 @@
 #  Author: Eduardo Recinos (VCISO)
 #  Repository: https://github.com/Drakk90/email-dns-audit
 #
-#  Interactive Usage (Prompts for language):
+#  Interactive Usage (Prompts for language and target):
 #    .\run.ps1
 #
 #  Direct CLI Usage:
-#    .\run.ps1 -DomainsFile servers.txt -DkimMode normal -DeepMonths 30 -Lang es
-#    .\run.ps1 -DomainsFile servers.txt -DkimMode deep -DeepMonths 30 -Lang en
+#    .\run.ps1 -Target servers.txt -DkimMode normal -DeepMonths 30 -Lang es
+#    .\run.ps1 -Target google.com -DkimMode deep -DeepMonths 30 -Lang en
 # =============================================================================
 
 [CmdletBinding()]
 param(
     [Parameter(Position=0)]
-    [string]$DomainsFile = "servers.txt",
+    [string]$Target = "",
 
     [Parameter(Position=1)]
     [string]$DkimMode = "normal",
@@ -30,6 +30,8 @@ param(
 $VENV_NAME = "venv-email-audit"
 $PY_SCRIPT = "email_dns_audit_neon.py"
 $DNSSEC_RESOLVERS = "1.1.1.1,8.8.8.8,9.9.9.9"
+
+$IsInteractive = [string]::IsNullOrWhiteSpace($Target) -and [string]::IsNullOrWhiteSpace($Lang)
 
 # ---------- 0. Interactive Language Prompt ----------
 $LangChoice = $Lang
@@ -51,6 +53,53 @@ if ([string]::IsNullOrWhiteSpace($LangChoice)) {
         $LangChoice = "en"
     } else {
         $LangChoice = "es"
+    }
+}
+
+# ---------- Target Selection (File vs Single Domain) ----------
+$TargetFlag = ""
+$TargetValue = ""
+
+if ($IsInteractive) {
+    if ($LangChoice -eq "en") {
+        Write-Host "🎯 Select Audit Target:" -ForegroundColor Cyan
+        Write-Host "   [1] 📋 Batch audit from domain list file (servers.txt)" -ForegroundColor White
+        Write-Host "   [2] 🎯 Single domain audit (e.g. example.com)" -ForegroundColor White
+        Write-Host ""
+        $targetMode = Read-Host "👉 Option [1/2] (Enter = servers.txt)"
+    } else {
+        Write-Host "🎯 Seleccione el objetivo de la auditoría:" -ForegroundColor Cyan
+        Write-Host "   [1] 📋 Auditar lista de dominios desde archivo (servers.txt)" -ForegroundColor White
+        Write-Host "   [2] 🎯 Auditar un solo dominio directamente (ej: miempresa.com)" -ForegroundColor White
+        Write-Host ""
+        $targetMode = Read-Host "👉 Opción [1/2] (Enter = servers.txt)"
+    }
+    Write-Host ""
+
+    if ($targetMode -eq "2") {
+        if ($LangChoice -eq "en") {
+            $singleDomain = Read-Host "👉 Enter target domain (e.g. google.com)"
+        } else {
+            $singleDomain = Read-Host "👉 Ingrese el dominio a auditar (ej: google.com)"
+        }
+        Write-Host ""
+        if ([string]::IsNullOrWhiteSpace($singleDomain)) { $singleDomain = "google.com" }
+        $TargetFlag = "--domain"
+        $TargetValue = $singleDomain
+    } else {
+        $TargetFlag = "--domains"
+        $TargetValue = "servers.txt"
+    }
+} else {
+    if (Test-Path $Target) {
+        $TargetFlag = "--domains"
+        $TargetValue = $Target
+    } elseif (-not [string]::IsNullOrWhiteSpace($Target)) {
+        $TargetFlag = "--domain"
+        $TargetValue = $Target
+    } else {
+        $TargetFlag = "--domains"
+        $TargetValue = "servers.txt"
     }
 }
 
@@ -79,11 +128,15 @@ if ($depCheck -notmatch "OK") {
     exit 1
 }
 
-# ---------- 2. Verify Domains File ----------
-if (-not (Test-Path $DomainsFile)) {
-    Write-Host "[ERROR] No se encontró el archivo de dominios / Domain file not found: $DomainsFile" -ForegroundColor Red
-    Write-Host "        Ejemplo: Copy-Item servers.example.txt servers.txt" -ForegroundColor Yellow
-    exit 1
+# ---------- 2. Verify Target File ----------
+if ($TargetFlag -eq "--domains" -and -not (Test-Path $TargetValue)) {
+    if (Test-Path "servers.example.txt") {
+        Copy-Item "servers.example.txt" "servers.txt"
+        Write-Host "[OK] servers.txt created from servers.example.txt" -ForegroundColor Green
+    } else {
+        Write-Host "[ERROR] Target domains file not found: $TargetValue" -ForegroundColor Red
+        exit 1
+    }
 }
 
 # ---------- 3. Build DKIM Arguments ----------
@@ -109,15 +162,15 @@ switch ($DkimMode.ToLower()) {
 # ---------- 4. Run Audit ----------
 Write-Host "[*] DNSSEC Resolvers: $DNSSEC_RESOLVERS" -ForegroundColor Cyan
 if ($LangChoice -eq "en") {
-    Write-Host "[*] Running audit (Excel report will be generated in English)..." -ForegroundColor Cyan
+    Write-Host "[*] Running audit (Target: $TargetFlag $TargetValue)..." -ForegroundColor Cyan
 } else {
-    Write-Host "[*] Ejecutando auditoría (El reporte Excel se generará en Español)..." -ForegroundColor Cyan
+    Write-Host "[*] Ejecutando auditoría (Objetivo: $TargetFlag $TargetValue)..." -ForegroundColor Cyan
 }
 Write-Host ""
 
 $cmdArgs = @(
     $PY_SCRIPT,
-    "--domains", $DomainsFile,
+    $TargetFlag, $TargetValue,
     "--dnssec-resolvers", $DNSSEC_RESOLVERS,
     "--lang", $LangChoice
 ) + $DkimArgs
@@ -129,4 +182,18 @@ if ($LangChoice -eq "en") {
     Write-Host "Audit finished · Eduardo Recinos (VCISO)" -ForegroundColor Cyan
 } else {
     Write-Host "Auditoría finalizada · Eduardo Recinos (VCISO)" -ForegroundColor Cyan
+}
+
+# ---------- 5. Post-Audit Report Opening ----------
+$latestExcel = Get-ChildItem -Path . -Filter "*.xlsx" -Recurse -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+if ($latestExcel -and $IsInteractive) {
+    Write-Host ""
+    if ($LangChoice -eq "en") {
+        $openReq = Read-Host "📊 Would you like to open the Excel report now? [y/N]"
+    } else {
+        $openReq = Read-Host "📊 ¿Desea abrir el reporte Excel ahora? [s/N]"
+    }
+    if ($openReq -match "^[sSyY]$") {
+        Start-Process $latestExcel.FullName
+    }
 }

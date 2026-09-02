@@ -30,19 +30,47 @@ $PY_SCRIPT = "email_dns_audit_neon.py"
 Write-Info "Step 1/6: Checking Python installation..."
 
 $PYTHON_CMD = $null
-if (Get-Command "python" -ErrorAction SilentlyContinue) {
-    $PYTHON_CMD = "python"
-} elseif (Get-Command "py" -ErrorAction SilentlyContinue) {
-    $PYTHON_CMD = "py"
+$candidates = @("python", "py", "python3")
+foreach ($cand in $candidates) {
+    $cmd = Get-Command $cand -ErrorAction SilentlyContinue
+    if ($cmd) {
+        # Check if it's not the dummy Windows Store redirect
+        if ($cmd.Source -and $cmd.Source -match "WindowsApps") {
+            continue
+        }
+        try {
+            $verTest = & $cand -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>$null
+            if ($verTest -match "^\d+\.\d+$") {
+                $PYTHON_CMD = $cand
+                $pyVersionRaw = $verTest
+                break
+            }
+        } catch {}
+    }
+}
+
+# Fallback test if candidates failed
+if (-not $PYTHON_CMD) {
+    try {
+        $verTest = & python -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>$null
+        if ($verTest -match "^\d+\.\d+$") {
+            $PYTHON_CMD = "python"
+            $pyVersionRaw = $verTest
+        }
+    } catch {}
 }
 
 if (-not $PYTHON_CMD) {
-    Write-Err "Python 3 is not installed or not in PATH."
-    Write-Err "Please download and install Python 3.10+ from https://www.python.org/downloads/ (check 'Add python.exe to PATH')."
+    Write-Err "Python 3 is not installed or not configured in your system PATH."
+    Write-Host ""
+    Write-Host "👉 Solution:" -ForegroundColor Yellow
+    Write-Host "   1. Download Python 3.10+ from: https://www.python.org/downloads/" -ForegroundColor White
+    Write-Host "   2. IMPORTANT: During installation, CHECK the box: 'Add python.exe to PATH'" -ForegroundColor Red
+    Write-Host "   3. Close and re-open this installer." -ForegroundColor White
+    Write-Host ""
     exit 1
 }
 
-$pyVersionRaw = & $PYTHON_CMD -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"
 $pyMajor = [int]($pyVersionRaw.Split('.')[0])
 $pyMinor = [int]($pyVersionRaw.Split('.')[1])
 

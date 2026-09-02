@@ -1,9 +1,6 @@
-# Cross-Platform Installers Specification
+# Delta for Cross-Platform Installers
 
-## Purpose
-Provide native, automated setup scripts, interactive runners, double-clickable launchers, and comprehensive documentation for Linux, macOS, and Windows environments.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Native Windows PowerShell & Batch Launchers
 The system MUST provide native PowerShell scripts (`setup.ps1` and `run.ps1`) as well as double-clickable batch wrappers (`setup.bat` and `run.bat`) for Windows environments. `setup.bat` MUST invoke `setup.ps1` with `-ExecutionPolicy Bypass`. `run.bat` MUST invoke `run.ps1` with `-ExecutionPolicy Bypass` forwarding all user arguments. `setup.ps1` MUST detect if the `python` command resolves to a zero-byte Windows Store execution alias (`WindowsApps\python.exe`) without a real Python installation and provide download guidance.
@@ -21,14 +18,6 @@ The interactive runners (`run.sh` and `run.ps1`) MUST offer the user the choice 
 - GIVEN an interactive execution of `run.sh` or `run.ps1`
 - WHEN the user selects the single-domain option and enters `example.com`
 - THEN the system MUST execute the scanner against `example.com` directly using `--domain example.com`.
-
-### Requirement: macOS and Homebrew Compatibility in Unix Scripts
-The `setup.sh` script MUST detect macOS (`uname -s == Darwin`) and Homebrew package manager (`brew`), avoiding Linux-specific package commands (`apt`, `pacman`, `dnf`) on macOS systems.
-
-#### Scenario: Running setup on macOS
-- GIVEN a macOS system with Homebrew or system Python
-- WHEN the user runs `bash setup.sh`
-- THEN the script MUST detect `brew` or macOS environment and proceed with virtual environment creation without invoking `apt` or `pacman`.
 
 ### Requirement: Post-Audit Report Presentation and Troubleshooting Documentation
 The interactive runners MUST identify the generated `.xlsx` report file and offer or initiate opening it with the native OS default spreadsheet handler (`start` on Windows, `open` on macOS, `xdg-open` on Linux). `README.md` MUST provide an exhaustive Troubleshooting FAQ in both English and Spanish covering Python PATH configuration, script execution permissions, zip extract usage, and Excel inspection.
