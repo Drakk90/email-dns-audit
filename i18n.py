@@ -296,6 +296,10 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "col_cons_mtasts": "Modo MTA-STS",
         "col_cons_tlsrpt": "TLS-RPT Publicado",
         "col_cons_bimi": "BIMI Publicado",
+        "col_cons_score_auth": "Score Autenticación (40)",
+        "col_cons_score_trans": "Score Transporte (25)",
+        "col_cons_score_dns": "Score DNS/Identidad (20)",
+        "col_cons_score_easm": "Score Superficie EASM (15)",
         "col_cons_compliance": "Cumplimiento Global",
 
         # --- Frameworks & Requirements ---
@@ -318,7 +322,6 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "lbl_total_time": "Tiempo Total",
         "lbl_excel_report": "Reporte Excel",
         "lbl_evidence_folder": "Carpeta de Evidencias",
-        "col_control": "Control",
         "col_status_hdr": "Estado",
         "err_no_domains": "Sin dominios especificados.",
     },
@@ -610,6 +613,10 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "col_cons_mtasts": "MTA-STS Mode",
         "col_cons_tlsrpt": "TLS-RPT Published",
         "col_cons_bimi": "BIMI Published",
+        "col_cons_score_auth": "Auth Score (40)",
+        "col_cons_score_trans": "Transport Score (25)",
+        "col_cons_score_dns": "DNS & Identity Score (20)",
+        "col_cons_score_easm": "EASM Score (15)",
         "col_cons_compliance": "Global Compliance",
 
         # --- Frameworks & Requirements ---
@@ -632,7 +639,6 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "lbl_total_time": "Total Time",
         "lbl_excel_report": "Excel Report",
         "lbl_evidence_folder": "Evidence Folder",
-        "col_control": "Control",
         "col_status_hdr": "Status",
         "err_no_domains": "No domains specified.",
     }

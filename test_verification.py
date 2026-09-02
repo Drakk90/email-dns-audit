@@ -39,11 +39,15 @@ class TestVerification(unittest.TestCase):
             ws_resumen = wb["Resumen"]
             self.assertEqual(ws_resumen["A5"].value, "=COUNTA('Inventario_Dominios'!B2:B2)")
             self.assertEqual(ws_resumen["D5"].value, '=COUNTIF(\'Hallazgos\'!E2:E2, "Crítica")')
-            self.assertEqual(ws_resumen["M5"].value, "=AVERAGE('Resumen_Consolidado'!X2:X2)")
+            self.assertEqual(ws_resumen["M5"].value, "=AVERAGE('Resumen_Consolidado'!AB2:AB2)")
             self.assertEqual(ws_resumen["M5"].number_format, "0.0%")
             ws_cons = wb["Resumen_Consolidado"]
-            self.assertEqual(ws_cons["X2"].number_format, "0.0%")
-            self.assertEqual(ws_cons["X2"].value, 0.90)
+            self.assertTrue(str(ws_cons["X2"].value).startswith("=IF"))
+            self.assertTrue(str(ws_cons["Y2"].value).startswith("=IF"))
+            self.assertTrue(str(ws_cons["Z2"].value).startswith("=IF"))
+            self.assertTrue(str(ws_cons["AA2"].value).startswith("=MAX"))
+            self.assertEqual(ws_cons["AB2"].value, "=(X2+Y2+Z2+AA2)/100")
+            self.assertEqual(ws_cons["AB2"].number_format, "0.0%")
 
     def test_dynamic_formulas_english(self):
         t_en = get_translator("en")
@@ -61,11 +65,15 @@ class TestVerification(unittest.TestCase):
             ws_summary = wb["Summary"]
             self.assertEqual(ws_summary["A5"].value, "=COUNTA('Domain_Inventory'!B2:B2)")
             self.assertEqual(ws_summary["D5"].value, '=COUNTIF(\'Findings\'!E2:E2, "Critical")')
-            self.assertEqual(ws_summary["M5"].value, "=AVERAGE('Consolidated_Summary'!X2:X2)")
+            self.assertEqual(ws_summary["M5"].value, "=AVERAGE('Consolidated_Summary'!AB2:AB2)")
             self.assertEqual(ws_summary["M5"].number_format, "0.0%")
             ws_cons = wb["Consolidated_Summary"]
-            self.assertEqual(ws_cons["X2"].number_format, "0.0%")
-            self.assertEqual(ws_cons["X2"].value, 0.90)
+            self.assertTrue(str(ws_cons["X2"].value).startswith("=IF"))
+            self.assertTrue(str(ws_cons["Y2"].value).startswith("=IF"))
+            self.assertTrue(str(ws_cons["Z2"].value).startswith("=IF"))
+            self.assertTrue(str(ws_cons["AA2"].value).startswith("=MAX"))
+            self.assertEqual(ws_cons["AB2"].value, "=(X2+Y2+Z2+AA2)/100")
+            self.assertEqual(ws_cons["AB2"].number_format, "0.0%")
 
 if __name__ == "__main__":
     unittest.main()

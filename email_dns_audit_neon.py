@@ -18,8 +18,8 @@
    - Reporte Excel unificado con pestañas, tablas y formatos condicionales.
 ═══════════════════════════════════════════════════════════════════════════════
 """
-import sys, os, re, time, base64, argparse, asyncio, subprocess, importlib, json, ssl, socket
-from datetime import datetime, timezone, timedelta
+import sys, re, time, base64, argparse, asyncio, subprocess, importlib, json, ssl, socket
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple
 
@@ -1714,13 +1714,13 @@ def build_excel(outdir: Path, data: Dict[str, List[Any]], hallazgos: List[Any], 
     total_domains_val = f"=COUNTA('{sheet_inv}'!B2:B{max(2, 1 + n_inv)})" if n_inv > 0 else 0
     crit_findings_val = f"=COUNTIF('{sheet_find}'!E2:E{max(2, 1 + n_find)}, \"{s_crit}\")" if n_find > 0 else 0
     high_findings_val = f"=COUNTIF('{sheet_find}'!E2:E{max(2, 1 + n_find)}, \"{s_high}\")" if n_find > 0 else 0
-    avg_comp_val = f"=AVERAGE('{sheet_cons}'!X2:X{max(2, 1 + n_cons)})" if n_cons > 0 else 0
+    avg_comp_val = f"=AVERAGE('{sheet_cons}'!AB2:AB{max(2, 1 + n_cons)})" if n_cons > 0 else 0
     ciso_score_val = (
-        f'=ROUND(AVERAGE(\'{sheet_cons}\'!X2:X{max(2, 1 + n_cons)})*100, 0) & " (" & '
-        f'IF(AVERAGE(\'{sheet_cons}\'!X2:X{max(2, 1 + n_cons)})>=0.9, "A", '
-        f'IF(AVERAGE(\'{sheet_cons}\'!X2:X{max(2, 1 + n_cons)})>=0.8, "B", '
-        f'IF(AVERAGE(\'{sheet_cons}\'!X2:X{max(2, 1 + n_cons)})>=0.7, "C", '
-        f'IF(AVERAGE(\'{sheet_cons}\'!X2:X{max(2, 1 + n_cons)})>=0.6, "D", "F")))) & ")"'
+        f'=ROUND(AVERAGE(\'{sheet_cons}\'!AB2:AB{max(2, 1 + n_cons)})*100, 0) & " (" & '
+        f'IF(AVERAGE(\'{sheet_cons}\'!AB2:AB{max(2, 1 + n_cons)})>=0.9, "A", '
+        f'IF(AVERAGE(\'{sheet_cons}\'!AB2:AB{max(2, 1 + n_cons)})>=0.8, "B", '
+        f'IF(AVERAGE(\'{sheet_cons}\'!AB2:AB{max(2, 1 + n_cons)})>=0.7, "C", '
+        f'IF(AVERAGE(\'{sheet_cons}\'!AB2:AB{max(2, 1 + n_cons)})>=0.6, "D", "F")))) & ")"'
     ) if n_cons > 0 else "0 (F)"
 
     cards = [
@@ -1967,17 +1967,50 @@ def build_excel(outdir: Path, data: Dict[str, List[Any]], hallazgos: List[Any], 
         data.get("compliance", []), status_col="D",
         col_widths=[24, 24, 45, 20, 55])
 
-    # 12. Resumen Consolidado
+    # 12. Resumen Consolidado con columnas de scoring formuladas
+    sheet_dkim = t("sheet_dkim")
+    sheet_easm = t("sheet_easm")
+    s_no = t("no")
+
+    resumen_rows = []
+    for ri, row in enumerate(data["resumen"], start=2):
+        row_copy = list(row[:23])
+
+        f_auth = (
+            f'=IF(OR(J{ri}="si",J{ri}="yes",J{ri}="Si",J{ri}="Yes"),'
+            f'IF(AND(OR(K{ri}="-all",K{ri}="~all"),N{ri}="no",L{ri}<=10),15,8),0)'
+            f'+IF(OR(O{ri}="si",O{ri}="yes",O{ri}="Si",O{ri}="Yes"),'
+            f'IF(P{ri}="reject",20,IF(P{ri}="quarantine",14,5)),0)'
+            f'+IF(COUNTIF(\'{sheet_dkim}\'!B:B,A{ri})>0,5,0)'
+        )
+        f_trans = (
+            f'=IF(U{ri}="enforce",15,IF(U{ri}="testing",8,0))'
+            f'+IF(OR(V{ri}="si",V{ri}="yes",V{ri}="Si",V{ri}="Yes"),10,0)'
+        )
+        f_dns = (
+            f'=IF(OR(I{ri}="Secure",LEFT(I{ri},7)="Firmado"),15,IF(LEFT(I{ri},10)="Incompleto",5,0))'
+            f'+IF(OR(W{ri}="si",W{ri}="yes",W{ri}="Si",W{ri}="Yes"),5,0)'
+        )
+        f_easm = (
+            f'=MAX(5,15-MIN(10,COUNTIFS(\'{sheet_easm}\'!A:A,A{ri},\'{sheet_easm}\'!D:D,"<>{s_no}")*3))'
+        )
+        f_comp = f'=(X{ri}+Y{ri}+Z{ri}+AA{ri})/100'
+
+        row_copy.extend([f_auth, f_trans, f_dns, f_easm, f_comp])
+        resumen_rows.append(row_copy)
+
     add_sheet(t("sheet_consolidated"),
         [t("col_cons_domain"), t("col_cons_registrar"), t("col_cons_created"), t("col_cons_expires"),
          t("col_cons_status"), t("col_cons_whois_dnssec"), t("col_cons_ns"), t("col_cons_soa"),
          t("col_cons_dnssec_diag"), t("col_cons_spf_pub"), t("col_cons_spf_all"), t("col_cons_spf_lookups"),
          t("col_cons_spf_void"), t("col_cons_spf_multi"), t("col_cons_dmarc_pub"), t("col_cons_dmarc_p"),
          t("col_cons_dmarc_sp"), t("col_cons_dmarc_pct"), t("col_cons_dmarc_rua"), t("col_cons_mx"),
-         t("col_cons_mtasts"), t("col_cons_tlsrpt"), t("col_cons_bimi"), t("col_cons_compliance")],
-        data["resumen"],
-        pct_col="X",
-        col_widths=[24, 22, 14, 14, 16, 14, 30, 14, 20, 10, 12, 12, 12, 12, 10, 12, 12, 10, 28, 20, 14, 10, 10, 20])
+         t("col_cons_mtasts"), t("col_cons_tlsrpt"), t("col_cons_bimi"),
+         t("col_cons_score_auth"), t("col_cons_score_trans"), t("col_cons_score_dns"), t("col_cons_score_easm"),
+         t("col_cons_compliance")],
+        resumen_rows,
+        pct_col="AB",
+        col_widths=[24, 22, 14, 14, 16, 14, 30, 14, 20, 10, 12, 12, 12, 12, 10, 12, 12, 10, 28, 20, 14, 10, 10, 22, 22, 22, 22, 20])
 
     wb.active = 0
     if args and getattr(args, "excel_name", None) and str(args.excel_name).strip():
