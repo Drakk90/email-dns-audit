@@ -304,6 +304,23 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "nist_csf_pr_ds": "NIST CSF 2.0 (PR.DS-01 - Cifrado y Protección de Datos en Tránsito)",
         "iso_27001_13": "ISO/IEC 27001:2022 (A.8.20 - Seguridad en Redes y Transporte Seguro)",
         "cis_control_9": "CIS Critical Controls v8 (Control 9.2 - Protección de Correo y Navegación)",
+
+        # --- UI Labels & Lookalikes Actions ---
+        "action_block_mx": "Bloquear / Monitorear MX",
+        "action_monitor_dns": "Monitorear DNS / Takedown",
+        "action_defensive_reg": "Registro Defensivo",
+        "action_claim_dangling": "Reclamar / Eliminar DNS Huérfano",
+        "lbl_author": "Autor",
+        "lbl_status": "Estado",
+        "lbl_severity": "Severidad",
+        "lbl_count": "Cantidad",
+        "lbl_time": "Tiempo",
+        "lbl_total_time": "Tiempo Total",
+        "lbl_excel_report": "Reporte Excel",
+        "lbl_evidence_folder": "Carpeta de Evidencias",
+        "col_control": "Control",
+        "col_status_hdr": "Estado",
+        "err_no_domains": "Sin dominios especificados.",
     },
 
     "en": {
@@ -601,6 +618,23 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "nist_csf_pr_ds": "NIST CSF 2.0 (PR.DS-01 - Data Protection in Transit / TLS)",
         "iso_27001_13": "ISO/IEC 27001:2022 (A.8.20 - Network Security & Secure Transport)",
         "cis_control_9": "CIS Critical Controls v8 (Control 9.2 - Email & Browser Protections)",
+
+        # --- UI Labels & Lookalikes Actions ---
+        "action_block_mx": "Block / Monitor MX",
+        "action_monitor_dns": "Monitor DNS / Takedown",
+        "action_defensive_reg": "Defensive Registration",
+        "action_claim_dangling": "Claim / Delete Dangling DNS",
+        "lbl_author": "Author",
+        "lbl_status": "Status",
+        "lbl_severity": "Severity",
+        "lbl_count": "Count",
+        "lbl_time": "Time",
+        "lbl_total_time": "Total Time",
+        "lbl_excel_report": "Excel Report",
+        "lbl_evidence_folder": "Evidence Folder",
+        "col_control": "Control",
+        "col_status_hdr": "Status",
+        "err_no_domains": "No domains specified.",
     }
 }
 
@@ -619,4 +653,5 @@ def get_translator(lang: str = "es") -> Callable[..., str]:
                 return msg
         return msg
 
+    translate.lang = active_lang
     return translate

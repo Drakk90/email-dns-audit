@@ -1152,13 +1152,13 @@ async def check_lookalikes(domain: str, ro: dns.asyncresolver.Resolver, outdir: 
         registered = bool(ips or mx_list)
         if registered and mx_list:
             threat = t("sev_critical")
-            action = "Bloquear / Monitorear MX" if t("yes") == "Si" else "Block / Monitor MX"
+            action = t("action_block_mx")
         elif registered and ips:
             threat = t("sev_high")
-            action = "Monitorear DNS / Takedown" if t("yes") == "Si" else "Monitor DNS / Takedown"
+            action = t("action_monitor_dns")
         else:
             threat = t("sev_info")
-            action = "Registro Defensivo" if t("yes") == "Si" else "Defensive Registration"
+            action = t("action_defensive_reg")
 
         return {
             "domain": domain,
@@ -1313,54 +1313,56 @@ def evaluate_ciso_compliance_and_score(info: Dict[str, Any], easm_res: List[Dict
     c_part = t("status_partial")
     c_non = t("status_non_compliant")
 
+    is_es = getattr(t, "lang", "es") == "es"
+
     # PCI-DSS v4.0 Req 5.4
-    if d["pub"] == "si" and d["p"] in ("reject", "quarantine") and d["pct"] in (100, "100"):
+    if d["pub"] == "si" and d["p"] in ("reject", "quarantine") and str(d["pct"]) in ("100", 100):
         pci_st = c_comp
-        pci_notes = "DMARC enforzado conforme a PCI-DSS v4.0 Req 5.4" if t("yes") == "Si" else "DMARC enforced per PCI-DSS v4.0 Req 5.4"
+        pci_notes = "DMARC enforzado conforme a PCI-DSS v4.0 Req 5.4" if is_es else "DMARC enforced per PCI-DSS v4.0 Req 5.4"
     elif d["pub"] == "si" and d["p"] == "none":
         pci_st = c_part
-        pci_notes = "DMARC en p=none (requiere migrar a reject/quarantine)" if t("yes") == "Si" else "DMARC in p=none (must migrate to reject/quarantine)"
+        pci_notes = "DMARC en p=none (requiere migrar a reject/quarantine)" if is_es else "DMARC in p=none (must migrate to reject/quarantine)"
     else:
         pci_st = c_non
-        pci_notes = "No cumple PCI-DSS v4.0 (Sin DMARC anti-phishing)" if t("yes") == "Si" else "Non-compliant with PCI-DSS v4.0 (No anti-phishing DMARC)"
+        pci_notes = "No cumple PCI-DSS v4.0 (Sin DMARC anti-phishing)" if is_es else "Non-compliant with PCI-DSS v4.0 (No anti-phishing DMARC)"
 
     # NIST CSF 2.0 PR.AC-01
     if auth_score >= 35:
         nist_ac_st = c_comp
-        nist_ac_notes = "Autenticación robusta SPF+DKIM+DMARC" if t("yes") == "Si" else "Strong SPF+DKIM+DMARC authentication"
+        nist_ac_notes = "Autenticación robusta SPF+DKIM+DMARC" if is_es else "Strong SPF+DKIM+DMARC authentication"
     elif auth_score >= 20:
         nist_ac_st = c_part
-        nist_ac_notes = "Autenticación parcial (faltan controles clave)" if t("yes") == "Si" else "Partial email authentication"
+        nist_ac_notes = "Autenticación parcial (faltan controles clave)" if is_es else "Partial email authentication"
     else:
         nist_ac_st = c_non
-        nist_ac_notes = "Riesgo alto de spoofing e impersonación" if t("yes") == "Si" else "High spoofing and impersonation risk"
+        nist_ac_notes = "Riesgo alto de spoofing e impersonación" if is_es else "High spoofing and impersonation risk"
 
     # NIST CSF 2.0 PR.DS-01
     if trans_score >= 20:
         nist_ds_st = c_comp
-        nist_ds_notes = "MTA-STS y TLS-RPT enforzados para transporte seguro" if t("yes") == "Si" else "MTA-STS and TLS-RPT enforced for secure transport"
+        nist_ds_notes = "MTA-STS y TLS-RPT enforzados para transporte seguro" if is_es else "MTA-STS and TLS-RPT enforced for secure transport"
     elif trans_score >= 8:
         nist_ds_st = c_part
-        nist_ds_notes = "MTA-STS en testing o TLS-RPT parcial" if t("yes") == "Si" else "MTA-STS in testing or partial TLS-RPT"
+        nist_ds_notes = "MTA-STS en testing o TLS-RPT parcial" if is_es else "MTA-STS in testing or partial TLS-RPT"
     else:
         nist_ds_st = c_non
-        nist_ds_notes = "Sin protección contra STARTTLS stripping / MitM" if t("yes") == "Si" else "No protection against STARTTLS stripping / MitM"
+        nist_ds_notes = "Sin protección contra STARTTLS stripping / MitM" if is_es else "No protection against STARTTLS stripping / MitM"
 
     # ISO/IEC 27001:2022 A.8.20
     if ds["diag"] == "Secure" or ds["diag"].startswith("Firmado"):
         iso_st = c_comp
-        iso_notes = "Zona firmada con DNSSEC y DS validado" if t("yes") == "Si" else "Zone signed with DNSSEC and validated DS"
+        iso_notes = "Zona firmada con DNSSEC y DS validado" if is_es else "Zone signed with DNSSEC and validated DS"
     else:
         iso_st = c_part if ds["diag"].startswith("Incompleto") else c_non
-        iso_notes = "DNSSEC no validado / riesgo de envenenamiento DNS" if t("yes") == "Si" else "DNSSEC not validated / DNS poisoning risk"
+        iso_notes = "DNSSEC no validado / riesgo de envenenamiento DNS" if is_es else "DNSSEC not validated / DNS poisoning risk"
 
     # CIS Controls v8 Control 9.2
     if auth_score >= 30 and trans_score >= 15:
         cis_st = c_comp
-        cis_notes = "Higiene y controles de correo alineados a CIS Control 9" if t("yes") == "Si" else "Email hygiene aligned with CIS Control 9"
+        cis_notes = "Higiene y controles de correo alineados a CIS Control 9" if is_es else "Email hygiene aligned with CIS Control 9"
     else:
         cis_st = c_part
-        cis_notes = "Implementar DMARC p=reject y MTA-STS para cumplir CIS" if t("yes") == "Si" else "Implement DMARC p=reject and MTA-STS for CIS compliance"
+        cis_notes = "Implementar DMARC p=reject y MTA-STS para cumplir CIS" if is_es else "Implement DMARC p=reject and MTA-STS for CIS compliance"
 
     matrix = [
         [domain, "PCI-DSS v4.0", t("pci_dmarc_req"), pci_st, pci_notes],
@@ -1538,27 +1540,19 @@ def process_results(info: Dict[str, Any], counters: Dict[str, Any], data: Dict[s
         data["remit"].append([counters["remit_row"], domain, prov, prop, mec, inc, firma, ali,
                              t("manual_validation"), t("manual_validation"), est])
 
-    # Cumplimiento global
-    score = 0
-    if s["pub"] == "si" and s["all"] in ("-all", "~all") and s["multi"] == "no" and s["lookups"] <= 10: score += 1
-    if d["pub"] == "si" and d["p"] != "none": score += 1
-    if ds["diag"] == "Secure" or ds["diag"].startswith("Firmado"): score += 1
-    if mt["mode"] == "enforce": score += 1
-    if tl["pub"] == "si": score += 1
-    if bi["pub"] == "si": score += 1
-    if info["dkim"]: score += 1
-    pct = score * 100 // 7
-    if pct >= 85: cumpl = t("compliance_high", pct=pct)
-    elif pct >= 50: cumpl = t("compliance_medium", pct=pct)
-    else: cumpl = t("compliance_low", pct=pct)
-    info["cumplimiento"] = cumpl; info["cumplimiento_pct"] = pct
-
-    # EASM & CISO Compliance Evaluation
+    # EASM & CISO Compliance Evaluation (Ponderado: Auth 40%, Transporte 25%, DNS 20%, EASM 15%)
     ciso_score, ciso_grade, comp_matrix = evaluate_ciso_compliance_and_score(
         info, info.get("easm", []), info.get("takeover", []), t=t
     )
     info["ciso_score"] = ciso_score
     info["ciso_grade"] = ciso_grade
+
+    # Cumplimiento global unificado con el Score CISO
+    pct = ciso_score
+    if pct >= 85: cumpl = t("compliance_high", pct=pct)
+    elif pct >= 50: cumpl = t("compliance_medium", pct=pct)
+    else: cumpl = t("compliance_low", pct=pct)
+    info["cumplimiento"] = cumpl; info["cumplimiento_pct"] = pct
 
     for comp_row in comp_matrix:
         data["compliance"].append(comp_row)
@@ -1580,7 +1574,7 @@ def process_results(info: Dict[str, Any], counters: Dict[str, Any], data: Dict[s
             hallazgos.append([
                 f"H-{len(hallazgos)+1:03d}", domain, "Subdomain Takeover",
                 t("f_subdomain_takeover", target=item['cname']),
-                t("sev_critical"), "Claim / Delete Dangling DNS"
+                t("sev_critical"), t("action_claim_dangling")
             ])
 
     # CAA & TLS data
@@ -1607,7 +1601,7 @@ def process_results(info: Dict[str, Any], counters: Dict[str, Any], data: Dict[s
                            info["dnssec_whois"], info["ns_list"], info["soa_serial"], ds["diag"],
                            s["pub"], s["all"], s["lookups"], s["void"], s["multi"], d["pub"], d["p"],
                            d["sp"], d["pct"], d["rua"], m["provider"], mt["mode"] or t("not_published"),
-                           tl["pub"], bi["pub"], cumpl])
+                           tl["pub"], bi["pub"], round(pct / 100.0, 4)])
 
 
 def build_excel(outdir: Path, data: Dict[str, List[Any]], hallazgos: List[Any], stats: Dict[str, Any], args: Any, t: Optional[Any] = None) -> Path:
@@ -1710,15 +1704,34 @@ def build_excel(outdir: Path, data: Dict[str, List[Any]], hallazgos: List[Any], 
     scell.font = F_SUBT; scell.fill = FILL_SUBT; scell.alignment = AC
     ws_cover.row_dimensions[2].height = 25
 
+    sheet_inv = t("sheet_inventory")
+    sheet_find = t("sheet_findings")
+    sheet_cons = t("sheet_consolidated")
+    n_inv = len(data.get("inventario", []))
+    n_find = len(hallazgos)
+    n_cons = len(data.get("resumen", []))
+
+    total_domains_val = f"=COUNTA('{sheet_inv}'!B2:B{max(2, 1 + n_inv)})" if n_inv > 0 else 0
+    crit_findings_val = f"=COUNTIF('{sheet_find}'!E2:E{max(2, 1 + n_find)}, \"{s_crit}\")" if n_find > 0 else 0
+    high_findings_val = f"=COUNTIF('{sheet_find}'!E2:E{max(2, 1 + n_find)}, \"{s_high}\")" if n_find > 0 else 0
+    avg_comp_val = f"=AVERAGE('{sheet_cons}'!X2:X{max(2, 1 + n_cons)})" if n_cons > 0 else 0
+    ciso_score_val = (
+        f'=ROUND(AVERAGE(\'{sheet_cons}\'!X2:X{max(2, 1 + n_cons)})*100, 0) & " (" & '
+        f'IF(AVERAGE(\'{sheet_cons}\'!X2:X{max(2, 1 + n_cons)})>=0.9, "A", '
+        f'IF(AVERAGE(\'{sheet_cons}\'!X2:X{max(2, 1 + n_cons)})>=0.8, "B", '
+        f'IF(AVERAGE(\'{sheet_cons}\'!X2:X{max(2, 1 + n_cons)})>=0.7, "C", '
+        f'IF(AVERAGE(\'{sheet_cons}\'!X2:X{max(2, 1 + n_cons)})>=0.6, "D", "F")))) & ")"'
+    ) if n_cons > 0 else "0 (F)"
+
     cards = [
-        (t("card_total_domains"), stats["total_domains"], C_DARK, "A", "C"),
-        (t("card_critical_findings"), stats["sev_count"].get(t("sev_critical"), 0), "C00000", "D", "F"),
-        (t("card_high_findings"), stats["sev_count"].get(t("sev_high"), 0), "ED7D31", "G", "I"),
-        (t("card_ciso_score"), f"{stats.get('ciso_score', '88 (B)')}", "0066B3", "J", "L"),
-        (t("card_avg_compliance"), f"{stats.get('avg_compliance', 85)}%", "70AD47", "M", "N"),
+        (t("card_total_domains"), total_domains_val, C_DARK, "A", "C", None),
+        (t("card_critical_findings"), crit_findings_val, "C00000", "D", "F", None),
+        (t("card_high_findings"), high_findings_val, "ED7D31", "G", "I", None),
+        (t("card_ciso_score"), ciso_score_val, "0066B3", "J", "L", None),
+        (t("card_avg_compliance"), avg_comp_val, "70AD47", "M", "N", "0.0%"),
     ]
 
-    for title, val, color_hex, start_col, end_col in cards:
+    for title, val, color_hex, start_col, end_col, num_fmt in cards:
         ws_cover.merge_cells(f"{start_col}4:{end_col}4")
         c_title = ws_cover[f"{start_col}4"]
         c_title.value = title
@@ -1732,6 +1745,8 @@ def build_excel(outdir: Path, data: Dict[str, List[Any]], hallazgos: List[Any], 
         c_val.font = Font(name="Century Gothic", size=18, bold=True, color="FFFFFF")
         c_val.fill = PatternFill("solid", fgColor=color_hex)
         c_val.alignment = AC
+        if num_fmt:
+            c_val.number_format = num_fmt
 
     ws_cover.row_dimensions[4].height = 20
     ws_cover.row_dimensions[5].height = 22
@@ -1770,7 +1785,7 @@ def build_excel(outdir: Path, data: Dict[str, List[Any]], hallazgos: List[Any], 
 
     set_widths(ws_cover, [14, 12, 12, 11, 11, 10, 10, 10, 10, 10, 10, 12, 12, 12])
 
-    def add_sheet(name: str, headers: List[str], rows: List[Any], status_col: Optional[str] = None, sev_col: Optional[str] = None, col_widths: Optional[List[int]] = None) -> Any:
+    def add_sheet(name: str, headers: List[str], rows: List[Any], status_col: Optional[str] = None, sev_col: Optional[str] = None, pct_col: Optional[str] = None, col_widths: Optional[List[int]] = None) -> Any:
         ws_new = wb.create_sheet(name)
         for i, h in enumerate(headers, start=1):
             ws_new.cell(row=1, column=i, value=h)
@@ -1785,6 +1800,11 @@ def build_excel(outdir: Path, data: Dict[str, List[Any]], hallazgos: List[Any], 
             set_widths(ws_new, col_widths)
         ws_new.freeze_panes = "A2"
         end = max(2, 1 + len(rows))
+        if pct_col and rows:
+            for r in range(2, end + 1):
+                c = ws_new[f"{pct_col}{r}"]
+                c.number_format = "0.0%"
+                c.alignment = AC
         if status_col:
             dv = DataValidation(type="list", formula1=LIST_EST, allow_blank=True)
             ws_new.add_data_validation(dv)
@@ -1956,10 +1976,15 @@ def build_excel(outdir: Path, data: Dict[str, List[Any]], hallazgos: List[Any], 
          t("col_cons_dmarc_sp"), t("col_cons_dmarc_pct"), t("col_cons_dmarc_rua"), t("col_cons_mx"),
          t("col_cons_mtasts"), t("col_cons_tlsrpt"), t("col_cons_bimi"), t("col_cons_compliance")],
         data["resumen"],
+        pct_col="X",
         col_widths=[24, 22, 14, 14, 16, 14, 30, 14, 20, 10, 12, 12, 12, 12, 10, 12, 12, 10, 28, 20, 14, 10, 10, 20])
 
     wb.active = 0
-    out_file = outdir / f"audit_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    if args and getattr(args, "excel_name", None) and str(args.excel_name).strip():
+        name = str(args.excel_name).strip()
+        out_file = outdir / (name if name.endswith(".xlsx") else f"{name}.xlsx")
+    else:
+        out_file = outdir / f"audit_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
     wb.save(out_file)
     return out_file
 
@@ -1970,7 +1995,7 @@ def banner(t: Optional[Any] = None) -> Panel:
            f"[bold {NM}]║[/]  [bold {NC}]E M A I L[/]  [bold {NG}]D N S[/]  [bold {NO}]A U D I T[/]  [bold {NY}]v 3 . 3[/]            [bold {NM}]║[/]\n"
            f"[bold {NM}]║[/]  [{NP} italic]{t('app_subtitle')}[/]                  [bold {NM}]║[/]\n"
            f"[bold {NM}]╚══════════════════════════════════════════════════════════════╝[/]\n"
-           f"  [{NC}]Author / Autor:[/] [bold {NY}]{t('author')}[/]   [{NC}]CISO:[/] [bold {NG}]{t('ciso')}[/]   "
+           f"  [{NC}]{t('lbl_author')}:[/] [bold {NY}]{t('author')}[/]   [{NC}]CISO:[/] [bold {NG}]{t('ciso')}[/]   "
            f"[{NC}]Version:[/] [bold {NO}]3.3[/]")
     return Panel(art, border_style=NM, box=DOUBLE, padding=(0, 1))
 
@@ -1983,7 +2008,7 @@ def status_bar(domain: str, idx: int, total: int, findings: int, start: float, t
     bar = f"[{NG}]" + "█" * fl + "[/][grey50]" + "░" * (bl - fl) + "[/]"
     return Panel(f"[{NC}]▶[/] [bold {NY}]{domain}[/]   {bar} [bold {NM}]{idx}/{total}[/] "
                  f"([bold {NG}]{pct:.0f}%[/])   [{NO}]{t('col_findings')}:[/] [bold {NR}]{findings}[/]   "
-                 f"[{NP}]Time:[/] [bold {NC}]{mins:02d}:{secs:02d}[/]",
+                 f"[{NP}]{t('lbl_time')}:[/] [bold {NC}]{mins:02d}:{secs:02d}[/]",
                  border_style=NC, box=ROUNDED, padding=(0, 1))
 
 
@@ -1996,8 +2021,8 @@ def render_panel(info: Dict[str, Any], t: Optional[Any] = None) -> Panel:
     color = NG if pct >= 85 else NY if pct >= 50 else NR
     tbl = Table(box=HEAVY, border_style=NP, show_header=True,
                 header_style=Style(color=NM, bold=True))
-    tbl.add_column("Control", style=Style(color=NC, bold=True), width=12)
-    tbl.add_column("Status / Estado", width=56)
+    tbl.add_column(t("col_control"), style=Style(color=NC, bold=True), width=12)
+    tbl.add_column(t("col_status_hdr"), width=56)
 
     def cell(x: str, l: str) -> str:
         if l == "ok": return f"[{NG}]✔ {x}[/]"
@@ -2095,8 +2120,8 @@ def final_panel(stats: Dict[str, Any], paths: Dict[str, Any], elapsed: float, t:
     mins, secs = divmod(int(elapsed), 60)
     sev_t = Table(box=ROUNDED, border_style=NP, show_header=True,
                   header_style=Style(color=NM, bold=True))
-    sev_t.add_column("Severity / Severidad", style=Style(color=NC, bold=True))
-    sev_t.add_column("Count", justify="right")
+    sev_t.add_column(t("lbl_severity"), style=Style(color=NC, bold=True))
+    sev_t.add_column(t("lbl_count"), justify="right")
     colors = {t("sev_critical"): NR, t("sev_high"): NO, t("sev_medium"): NY, t("sev_low"): NG, t("sev_info"): "grey70"}
     for sev_key in ["sev_critical", "sev_high", "sev_medium", "sev_low", "sev_info"]:
         s_lbl = t(sev_key)
@@ -2104,9 +2129,11 @@ def final_panel(stats: Dict[str, Any], paths: Dict[str, Any], elapsed: float, t:
         c = colors.get(s_lbl, "white")
         sev_t.add_row(f"[{c}]{s_lbl}[/]", f"[{c}]{n}[/]")
     body = (f"[bold {NC}]{t('card_total_domains')}:[/] [bold {NG}]{stats['total_domains']}[/]\n"
-            f"[bold {NC}]Total Time:[/] [bold {NO}]{mins:02d}:{secs:02d}[/]\n"
-            f"[bold {NC}]Excel Report:[/] [bold {NY}]{paths['excel']}[/]\n"
-            f"[bold {NC}]Evidence Folder:[/] [bold {NY}]{paths['evidencias']}[/]")
+            f"[bold {NC}]{t('card_ciso_score')}:[/] [bold {NY}]{stats.get('ciso_score', 'N/D')}[/]\n"
+            f"[bold {NC}]{t('card_avg_compliance')}:[/] [bold {NG}]{stats.get('avg_compliance', 0)}%[/]\n"
+            f"[bold {NC}]{t('lbl_total_time')}:[/] [bold {NO}]{mins:02d}:{secs:02d}[/]\n"
+            f"[bold {NC}]{t('lbl_excel_report')}:[/] [bold {NY}]{paths['excel']}[/]\n"
+            f"[bold {NC}]{t('lbl_evidence_folder')}:[/] [bold {NY}]{paths['evidencias']}[/]")
     return Panel(body, title=f"[bold {NM}]✦ {t('summary_title')} ✦[/]",
                  border_style=NM, box=DOUBLE, padding=(1, 2))
 
@@ -2124,7 +2151,7 @@ async def run_audit(args: Any) -> None:
     else:
         domains = []
     if not domains:
-        console.print(f"[{NR}]ERROR: Sin dominios / No domains found.[/]")
+        console.print(f"[{NR}]ERROR: {t('err_no_domains')}[/]")
         return
     data = {k: [] for k in ["spf", "dkim", "dmarc", "dnssec", "mtasts", "tlsrpt", "bimi", "remit", "resumen", "inventario", "easm", "compliance", "caa_tls"]}
     hallazgos: List[Any] = []
@@ -2138,10 +2165,12 @@ async def run_audit(args: Any) -> None:
     if args.deep_dkim:
         console.print(f"[{NY}][*] Modo DKIM PROFUNDO activado (--deep-dkim, {args.deep_months} meses de selectores rotativos)[/]")
     console.print()
+    audited_infos: List[Dict[str, Any]] = []
     for i, domain in enumerate(domains, 1):
         try:
             console.print(status_bar(domain, i - 1, len(domains), len(hallazgos), start, t=t))
             info = await audit_domain(domain, args, ro, http, outdir, counters, data, hallazgos, t=t)
+            audited_infos.append(info)
             console.print(render_panel(info, t=t)); console.print()
         except Exception as e:
             console.print(f"[{NR}]ERROR {domain}: {e}[/]")
@@ -2151,6 +2180,22 @@ async def run_audit(args: Any) -> None:
         stats["sev_count"][sev] = stats["sev_count"].get(sev, 0) + 1
     stats["total_domains"] = len(domains)
     stats["total_findings"] = len(hallazgos)
+
+    if audited_infos:
+        avg_score = round(sum(inf.get("ciso_score", 0) for inf in audited_infos) / len(audited_infos), 1)
+        avg_pct = round(sum(inf.get("cumplimiento_pct", 0) for inf in audited_infos) / len(audited_infos), 1)
+        if avg_score >= 90: avg_grade = "A"
+        elif avg_score >= 80: avg_grade = "B"
+        elif avg_score >= 70: avg_grade = "C"
+        elif avg_score >= 60: avg_grade = "D"
+        else: avg_grade = "F"
+        stats["ciso_score"] = f"{int(avg_score)} ({avg_grade})"
+        stats["ciso_score_val"] = avg_score
+        stats["avg_compliance"] = avg_pct
+    else:
+        stats["ciso_score"] = "0 (F)"
+        stats["ciso_score_val"] = 0
+        stats["avg_compliance"] = 0
     elapsed = time.time() - start
     excel_path = build_excel(outdir, data, hallazgos, stats, args, t=t)
     await http.aclose()

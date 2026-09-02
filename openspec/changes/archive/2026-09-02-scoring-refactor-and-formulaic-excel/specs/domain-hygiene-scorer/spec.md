@@ -1,12 +1,10 @@
-# Domain Hygiene Scorer Specification
+# Delta for Domain Hygiene Scorer
 
-## Purpose
-Aggregate multi-source protocol and surface findings into an executive risk score (0-100 / Grade A-F) and map vulnerabilities to standard security frameworks (PCI-DSS, NIST, ISO 27001).
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Weighted Security Posture Scoring
 The system MUST compute a unified composite score (0-100) and derived compliance percentage based on canonical category weights: Email Authentication (40%), Transport Encryption (25%), Attack Surface/Brand (15%), and DNS/Identity Infrastructure (20%), completely replacing unweighted flat scoring counters.
+(Previously: Computed flat score // 7 independently from CISO weighted score)
 
 #### Scenario: Full compliance calculation
 - GIVEN a domain with strict DMARC (`p=reject`), valid SPF, MTA-STS enforced, TLS 1.3 on MX, and DNSSEC active
@@ -20,13 +18,7 @@ The system MUST compute a unified composite score (0-100) and derived compliance
 - WHEN the scorer evaluates the results
 - THEN the system MUST assign proportional score and compliance matching category weights without flat integer step jumps.
 
-### Requirement: Regulatory Compliance Mapping
-The system MUST cross-reference findings against compliance standards including PCI-DSS v4.0 Requirement 5.4 (DMARC anti-phishing mandate).
-
-#### Scenario: PCI-DSS v4.0 non-compliance detection
-- GIVEN a domain with `p=none` or missing DMARC
-- WHEN the scorer runs compliance checks
-- THEN the system MUST flag non-compliance for PCI-DSS v4.0 Requirement 5.4.
+## ADDED Requirements
 
 ### Requirement: Multi-Domain Audit Metric Aggregation
 The audit engine MUST calculate true mean averages across all audited domains for CISO risk score and compliance percentage, storing them in execution statistics for report rendering without static defaults.
