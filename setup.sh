@@ -52,8 +52,20 @@ banner() {
     echo
 }
 
+detect_os() {
+    local os
+    os="$(uname -s 2>/dev/null || echo "unknown")"
+    case "$os" in
+        Darwin) echo "macos" ;;
+        Linux)  echo "linux" ;;
+        *)      echo "unknown" ;;
+    esac
+}
+
 detect_pkg_manager() {
-    if command -v apt &>/dev/null; then echo "apt"
+    if [[ "$(detect_os)" == "macos" ]]; then
+        if command -v brew &>/dev/null; then echo "brew"; else echo "macos-nobrew"; fi
+    elif command -v apt &>/dev/null; then echo "apt"
     elif command -v pacman &>/dev/null; then echo "pacman"
     elif command -v dnf &>/dev/null; then echo "dnf"
     else echo "unknown"; fi
@@ -80,13 +92,20 @@ run_priv() {
 }
 
 # =============================================================================
-#  Instala venv/pip segun distro, detectando la version EXACTA de Python
-#  en sistemas Debian/Ubuntu/Kali (python3.X-venv).
+#  Instala venv/pip segun distro/SO, detectando la version EXACTA de Python
+#  en sistemas Debian/Ubuntu/Kali (python3.X-venv) y Homebrew en macOS.
 # =============================================================================
 ensure_venv_packages() {
     local pkg
     pkg="$(detect_pkg_manager)"
     case "$pkg" in
+        brew)
+            info "Verificando/instalando Python en macOS (Homebrew)..."
+            brew install python || true
+            ;;
+        macos-nobrew)
+            warn "Homebrew no detectado en macOS. Instala Python 3.10+ desde python.org o instala Homebrew."
+            ;;
         apt)
             # Detectar version exacta para instalar python3.X-venv correcto
             local pyver
@@ -130,6 +149,7 @@ if [[ -z "$PYTHON_BIN" ]]; then
     warn "Python 3 no esta instalado. Intentando instalar..."
     pkg="$(detect_pkg_manager)"
     case "$pkg" in
+        brew)   brew install python ;;
         apt)    run_priv apt update -y && run_priv apt install -y python3 python3-pip python3-venv ;;
         pacman) run_priv pacman -S --needed --noconfirm python python-pip ;;
         dnf)    run_priv dnf install -y python3 python3-pip ;;

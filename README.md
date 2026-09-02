@@ -40,13 +40,17 @@
 
 ---
 
-## ⚡ Quickstart & Installation
+## ⚡ Quickstart & Multi-Platform Installation
 
-### 1. Prerequisites (Linux)
-- Python 3.10+ & `pip`
-- Git
+### 1. Prerequisites
+- **Python 3.10+** & `git`
+- Supported OS: **Linux** (Kali, Debian, Ubuntu, Arch, Fedora), **macOS** (10.15+), **Windows 10/11** (PowerShell 5.1+ / 7+ or WSL2).
 
-### 2. Setup (Run Once)
+---
+
+### 🐧 Linux & 🍎 macOS (Bash / Zsh)
+
+#### 1. Clone & Automated Setup
 ```bash
 git clone https://github.com/Drakk90/email-dns-audit.git
 cd email-dns-audit
@@ -56,23 +60,56 @@ chmod +x setup.sh run.sh
 ./setup.sh
 ```
 
-### 3. Prepare Target Domains
-Create your `servers.txt` file (one domain per line):
+#### 2. Configure Target Domains
 ```bash
 cp servers.example.txt servers.txt
 nano servers.txt
 ```
 
-### 4. Run the Audit
+#### 3. Run the Audit
 ```bash
-# Standard Balanced Run (Spanish Default)
+# Interactive Runner (Prompts for Spanish / English):
 ./run.sh
 
-# Standard Balanced Run in English
+# Direct Run in English:
 ./run.sh servers.txt normal 30 en
 
-# Deep DKIM Discovery in English (30 months date-rotated selectors)
+# Deep DKIM Discovery in English (30 months date-rotated selectors):
 ./run.sh servers.txt deep 30 en
+```
+
+---
+
+### 🪟 Windows Native (PowerShell)
+
+#### 1. Clone & Automated Setup
+Open **PowerShell** in the project directory:
+```powershell
+git clone https://github.com/Drakk90/email-dns-audit.git
+cd email-dns-audit
+
+# Allow script execution for current session if restricted
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+
+# Run the automated PowerShell installer
+.\setup.ps1
+```
+
+#### 2. Configure Target Domains
+```powershell
+notepad servers.txt
+```
+
+#### 3. Run the Audit
+```powershell
+# Interactive Runner (Prompts for Spanish / English):
+.\run.ps1
+
+# Direct Run in English:
+.\run.ps1 -DomainsFile servers.txt -DkimMode normal -DeepMonths 30 -Lang en
+
+# Deep DKIM Discovery in English:
+.\run.ps1 -DomainsFile servers.txt -DkimMode deep -DeepMonths 30 -Lang en
 ```
 
 ---
@@ -132,37 +169,76 @@ Each audit run produces a dedicated output directory containing:
 
 ---
 
-## ⚡ Instalación y Uso Rápido
+## ⚡ Instalación y Uso Rápido Multiplataforma
 
-### 1. Requisitos (Linux)
-- Python 3.10+ y `pip`
-- Git
+### 1. Requisitos Previos
+- **Python 3.10+** y `git`
+- Sistemas compatibles: **Linux** (Kali, Debian, Ubuntu, Arch, Fedora), **macOS** (10.15+), **Windows 10/11** (PowerShell 5.1+ / 7+ o WSL2).
 
-### 2. Instalación (Se ejecuta UNA sola vez)
+---
+
+### 🐧 Linux y 🍎 macOS (Bash / Zsh)
+
+#### 1. Clonación e Instalación Automática
 ```bash
 git clone https://github.com/Drakk90/email-dns-audit.git
 cd email-dns-audit
 
+# Ejecutar instalador automatizado
 chmod +x setup.sh run.sh
 ./setup.sh
 ```
 
-### 3. Configurar Dominios a Auditar
+#### 2. Configurar Dominios a Auditar
 ```bash
 cp servers.example.txt servers.txt
 nano servers.txt
 ```
 
-### 4. Ejecutar Auditoría
+#### 3. Ejecutar Auditoría
 ```bash
-# Modo Balanceado por defecto (Español)
+# Ejecutor interactivo (Pregunta idioma de consola y Excel):
 ./run.sh
 
-# Modo Balanceado en Inglés
-./run.sh servers.txt normal 30 en
+# Ejecución directa en Español:
+./run.sh servers.txt normal 30 es
 
-# Modo DKIM Profundo en Español (30 meses de rotación)
+# Modo DKIM Profundo en Español (30 meses de rotación de selectores):
 ./run.sh servers.txt deep 30 es
+```
+
+---
+
+### 🪟 Windows Nativo (PowerShell)
+
+#### 1. Clonación e Instalación Automática
+Abrir **PowerShell** en la carpeta del proyecto:
+```powershell
+git clone https://github.com/Drakk90/email-dns-audit.git
+cd email-dns-audit
+
+# Habilitar ejecución de scripts para la sesión actual si está restringido
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+
+# Ejecutar el instalador automatizado para Windows
+.\setup.ps1
+```
+
+#### 2. Configurar Dominios a Auditar
+```powershell
+notepad servers.txt
+```
+
+#### 3. Ejecutar Auditoría
+```powershell
+# Ejecutor interactivo (Pregunta idioma de consola y Excel):
+.\run.ps1
+
+# Ejecución directa en Español:
+.\run.ps1 -DomainsFile servers.txt -DkimMode normal -DeepMonths 30 -Lang es
+
+# Modo DKIM Profundo en Español:
+.\run.ps1 -DomainsFile servers.txt -DkimMode deep -DeepMonths 30 -Lang es
 ```
 
 ---
